@@ -1,3 +1,8 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Neuropyx.py
+"""
 import sys
 sys.path.append('/Users/tortugar/My Drive/Penn/Programming/PySleep')
 import sleepy
@@ -97,8 +102,6 @@ def brstate_class(np_path,sleep_path,sleep_rec,mouse,tend=-1,tstart=0, pzscore=T
                 else:
                     M[s] = 3
     ###########################################################################
-
-
 
     # cut out kcuts: ###############
     #print('Applying kcut')
@@ -372,7 +375,7 @@ def load_config(config):
 
     """
 
-    fid = open(config, 'rU')
+    fid = open(config, 'r')
     lines = fid.readlines()
 
     mouse = 'X'
@@ -380,17 +383,17 @@ def load_config(config):
     newline = True
 
     for l in lines:
-        if re.match('^\s*#', l):
+        if re.match(r'^\s*#', l):
             continue
 
-        if len(l)==0  or re.match('^\s*$', l):
+        if len(l)==0  or re.match(r'^\s*$', l):
             newline = True
             continue
 
-        a = re.split('\s+', l)
+        a = re.split(r'\s+', l)
 
         # cut away the ':' or ' :'
-        field = re.split('\s*:', a[0])[0]
+        field = re.split(r'\s*:', a[0])[0]
         value  = a[1]
 
         if not newline:
@@ -417,7 +420,7 @@ def load_config(config):
                 #    if l == '$':
                 #        c[1] = len(M)
                 k1 = float(c[0])
-                if re.match('[\d\.]+', c[1]):
+                if re.match(r'[\d\.]+', c[1]):
                     k2 = float(c[1])
                 else:
                     k2 = c[1]
@@ -429,8 +432,7 @@ def load_config(config):
     for m in recordings:
         if 'EXCLUDE' in recordings[m]:
             a = recordings[m]['EXCLUDE']
-            k = re.split(',\s*', a)
-
+            k = re.split(r',\s*', a)
 
             recordings[m]['EXCLUDE'] = k
     
@@ -2752,9 +2754,9 @@ def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], max_laser=20, local_p
     if pplot:
         plt.figure() 
         if local_pzscore:
-            sns.lineplot(data=df, x='time', y='valz', hue='pc')
+            sns.lineplot(data=df, x='time', y='valz', hue='pc', palette='husl')
         else:
-            sns.lineplot(data=df, x='time', y='val', hue='pc')
+            sns.lineplot(data=df, x='time', y='val', hue='pc', palette='husl')
         plt.xlim([t[0], t[-1]])
         sns.despine()
                 
@@ -4464,6 +4466,49 @@ def state_correlation(fr1, fr2, M, istate=3, win=60, tbreak=10, dt=2.5, pplot=Tr
 
 def state_correlation_avg(units, ids1, ids2, M, kcuts=[], istate=3, win=60, tbreak=10, nsmooth=0, 
                           pzscore=True, dt=2.5, pplot=True, self_correlation=False):
+    """
+    State-dependent cross-correlation. 
+    Autocorrelate each pair of units within two sets of units (@ids1 and @ids2). 
+
+    Parameters
+    ----------
+    units : pd.DataFrame
+        each column is one unit with the unit ID as label.
+    ids1 : list
+        IDs of units in set 1.
+    ids2 : list
+        IDs of units in set 2.
+    M : np.array
+        hypnogram.
+    kcuts : TYPE, optional
+        DESCRIPTION. The default is [].
+    istate : TYPE, optional
+        DESCRIPTION. The default is 3.
+    win : TYPE, optional
+        DESCRIPTION. The default is 60.
+    tbreak : TYPE, optional
+        DESCRIPTION. The default is 10.
+    nsmooth : TYPE, optional
+        DESCRIPTION. The default is 0.
+    pzscore : TYPE, optional
+        DESCRIPTION. The default is True.
+    dt : TYPE, optional
+        DESCRIPTION. The default is 2.5.
+    pplot : TYPE, optional
+        DESCRIPTION. The default is True.
+    self_correlation : TYPE, optional
+        DESCRIPTION. The default is False.
+
+    Returns
+    -------
+    df : pd.DataFrame
+        holding the (averaged) cross-correlation for each pair of units,
+        with columns ['time', 'cc', 'label', 'id1', 'id2'].
+    dfr : pd.DataFrame
+        holding the maximum or minimum peak value in the cross-correlation,
+        with columns ['time', 'cc', 'label', 'id1', 'id2']
+
+    """
 
     nhypno = np.min((len(M), units.shape[0]))
     M = M[0:nhypno]
@@ -4506,7 +4551,6 @@ def state_correlation_avg(units, ids1, ids2, M, kcuts=[], istate=3, win=60, tbre
     fr1 = fr1_new
     fr2 = fr2_new
     
-    
     data = []
     if not self_correlation:
         for i in range(fr1.shape[0]):
@@ -4526,11 +4570,8 @@ def state_correlation_avg(units, ids1, ids2, M, kcuts=[], istate=3, win=60, tbre
                 label = ids1[i] + ' x ' + ids2[j]
                 m = len(t)
                 data += zip(t, cc, [label]*m, [ids1[i]]*m, [ids2[j]]*m)
-        
-
-            
-    df = pd.DataFrame(data=data, columns=['time', 'cc', 'label', 'id1', 'id2'])
-    
+                    
+    df = pd.DataFrame(data=data, columns=['time', 'cc', 'label', 'id1', 'id2'])    
     labels = df['label'].unique().tolist()
     
     data = []
