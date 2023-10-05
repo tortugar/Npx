@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Neuropyx.py
+neuropyx.py
 """
 import sys
 sys.path.append('/Users/tortugar/My Drive/Penn/Programming/PySleep')
 import sleepy
-
 import numpy as np
 import scipy
 import pandas as pd
@@ -34,13 +33,22 @@ def brstate_class(np_path,sleep_path,sleep_rec,mouse,tend=-1,tstart=0, pzscore=T
                 ma_thr=10, ma_rem_exception=False,
                 pplot=True, config_file='mouse_config.txt'):
     """
-    calculate average ROI DF/F activity during each brain state and then 
-    perform statistics for ROIs to classify them into REM-max, Wake-max, or NREM-max.
+    calculate average firing rate during each brain state and then 
+    perform statistics for units to classify them into REM-max, Wake-max, or NREM-max.
     For each ROI anova is performed, followed by Tukey-test
     
-    :param ipath: base imaging folder
-    :param mapping: pandas DataFrame as returned by &load_roimapping.
-           The frame contains a column for the 
+    
+    
+    :param np_path: folder where firing rates are located
+    :param sleep_path: folder where EEG data and sleep annotation is located
+    :param sleep_rec: name of sleep recording
+    
+            Note: easiest way to get np_path, sleep_path, and sleep_rec:    
+            paths = neuropyx.load_config(config_file)[mouse]
+            ppath, name = os.path.split(paths['SL_PATH'])
+            np_path = paths['NP_PATH']
+
+    :param mouse: mouse name 
     :param pzscore: if True, z-score DF/F traces
     
     :param class_mode: class_mode == 'basic': classify ROIs into 
@@ -57,6 +65,10 @@ def brstate_class(np_path,sleep_path,sleep_rec,mouse,tend=-1,tstart=0, pzscore=T
                        
            Neurons that are not significantly modulated by the brain state
            are labeled X
+           
+           NOTE: A given unit can only be part of one subclass.
+           R-Off comes before W-max.
+           
                        
     :param single_mice: boolean, if True use separate colors for single mice in 
                         summary plots
@@ -82,15 +94,7 @@ def brstate_class(np_path,sleep_path,sleep_rec,mouse,tend=-1,tstart=0, pzscore=T
     sr = sleepy.get_snr(sleep_path,sleep_rec)
     nbin = int(np.round(sr)*2.5)
     sdt = nbin * (1.0/sr)
-
-    # brainstate and process ma 
-    # M = sleepy.load_stateidx(sleep_path,sleep_rec)[0]
-    # if ma_thr > 0:
-    #        seq = sleepy.get_sequences(np.where(M == 2)[0])
-    #        for s in seq:
-    #            if np.round(len(s)*sdt) <= ma_thr:
-    #                M[s] = 3
-
+    
     # flatten out MAs #########################################################
     if ma_thr>0:
         seq = sleepy.get_sequences(np.where(M==2)[0])
@@ -521,12 +525,12 @@ def exclude_units(units, mouse, config_file):
 
     Parameters
     ----------
-    units : TYPE
-        DESCRIPTION.
-    mouse : TYPE
-        DESCRIPTION.
-    config_file : TYPE
-        DESCRIPTION.
+    units : pd.pandas
+        each colums hold the firing rate of a unit.
+    mouse : string
+        the mouse name.
+    config_file : string
+        string of the name of the config file as loaded by &load_config().
 
     Returns
     -------
@@ -1498,7 +1502,7 @@ def align_pcsign(PC, mouse, rem_pca=0, kcuts=[], config_file='', pnorm_spec=True
     Returns
     -------
     pc_sign : list of length PC.shape[0]
-        -1 or 1 depending on whether the orientation of the PC should be changed or not.
+        1 or -1 depending on whether the orientation of the PC should be changed or not.
 
     """
     
@@ -1550,12 +1554,12 @@ def align_pcsign(PC, mouse, rem_pca=0, kcuts=[], config_file='', pnorm_spec=True
         
         
     # fix PC3 the same way
-    pc3 = PC[rem_pca,:]
-    rem_idx = np.where(M==1)[0]
-    a = pc3[rem_idx].mean()
-    if a < 0:
-        pc_sign[2] = -1
-
+    if PC.shape[0] > 2:
+        pc3 = PC[2,:]
+        rem_idx = np.where(M==1)[0]
+        a = pc3[rem_idx].mean()
+        if a < 0:
+            pc_sign[2] = -1
     
     # fix PC2 through correlation with sigma power
     if pnorm_spec:
@@ -3708,6 +3712,7 @@ def plot_is_trajectories(PC, mouse, kcuts=[], config_file='', ma_thr=10, pc_sign
             tail_signal = PC[1,:]
         else:
             tail_signal = PC[0,:]
+    else:
         lead_signal = sigma_pow
         tail_signal = sigma_pow
     
@@ -4413,8 +4418,6 @@ def state_correlation(fr1, fr2, M, istate=3, win=60, tbreak=10, dt=2.5, pplot=Tr
     seq = [s for s in seq if len(s)*2.5 > 2*win]
 
     iwin = int(win / dt)
-    #pdb.set_trace()
-
     CC = []
     for s in seq:
         fr1cut = fr1[s]
@@ -4434,6 +4437,10 @@ def state_correlation(fr1, fr2, M, istate=3, win=60, tbreak=10, dt=2.5, pplot=Tr
         
         #xx = scipy.signal.correlate(dffd[1:m], pow_band[0:m - 1])/ norm
         xx = (1/m) * scipy.signal.correlate(fr1cut, fr2cut)/ norm
+        if norm == 0:
+            xx[:] = np.nan
+        
+        
         ii = np.arange(len(xx) / 2 - iwin, len(xx) / 2 + iwin + 1)
         ii = [int(i) for i in ii]
         
@@ -4450,12 +4457,12 @@ def state_correlation(fr1, fr2, M, istate=3, win=60, tbreak=10, dt=2.5, pplot=Tr
         #t = np.arange(-iwin, iwin + 1) * dt
         # note: point t[iwin] is "0"
         c = np.sqrt(CC.shape[0])
-        a = CC.mean(axis=0) - CC.std(axis=0)/c
-        b = CC.mean(axis=0) + CC.std(axis=0)/c
+        a = np.nanmean(CC, axis=0) - np.nanstd(CC, axis=0)/c
+        b = np.nanmean(CC, axis=0) + np.nanstd(CC, axis=0)/c
         plt.fill_between(t,a,b, color='gray', alpha=0.5)
         plt.plot(t, np.nanmean(CC, axis=0), color='black')
         plt.xlabel('Time (s)')
-        plt.ylabel('Corr. $\Delta F/F$ vs. EEG')
+        plt.ylabel('Norm. CC')
         plt.xlim([t[0], t[-1]])
         sleepy.box_off(ax)
         plt.show()
@@ -4480,24 +4487,26 @@ def state_correlation_avg(units, ids1, ids2, M, kcuts=[], istate=3, win=60, tbre
         IDs of units in set 2.
     M : np.array
         hypnogram.
-    kcuts : TYPE, optional
-        DESCRIPTION. The default is [].
+    kcuts : list of tuples, optional
+        Cut out the specific areas from the recording. The default is [].
     istate : TYPE, optional
         DESCRIPTION. The default is 3.
     win : TYPE, optional
         DESCRIPTION. The default is 60.
     tbreak : TYPE, optional
         DESCRIPTION. The default is 10.
-    nsmooth : TYPE, optional
-        DESCRIPTION. The default is 0.
+    nsmooth : float, optional
+        Smoothing parameter passed to &sleepy.smooth_data(). The default is 0.
     pzscore : TYPE, optional
         DESCRIPTION. The default is True.
     dt : TYPE, optional
         DESCRIPTION. The default is 2.5.
-    pplot : TYPE, optional
-        DESCRIPTION. The default is True.
-    self_correlation : TYPE, optional
-        DESCRIPTION. The default is False.
+    pplot : bool, optional
+        If True, generate figure showing cross-correlation. The default is True.
+    self_correlation : bool, optional
+        If True, sets ids1 and ids2 are identical. In this case, correlate
+        each possible pair only once. 
+        The default is False.
 
     Returns
     -------
@@ -4530,21 +4539,51 @@ def state_correlation_avg(units, ids1, ids2, M, kcuts=[], istate=3, win=60, tbre
         nhypno = len(tidx)        
     ###########################################################################    
 
+
+
+    # ###########################################################################
+    # if len(units) == 0:
+    #     fine_scale = True
+        
+    #     tr_path = load_config('mouse_config.txt')[mouse]['TR_PATH']
+    #     units = np.load(os.path.join(tr_path,'1k_train.npz')) 
+    #     unitIDs = [unit for unit in list(units.keys()) if '_' in unit]
+    #     unitIDs = [unit for unit in unitIDs if re.split('_', unit)[1] == 'good']
+
+    #     dt = dt / NUP
+    #     M = upsample_mx(M, NUP)
+    #     nhypno = int(np.min((len(M), units[unitIDs[0]].shape[0]/NDOWN)))
+
+    # else:
+    #     unitIDs = [unit for unit in units.columns if '_' in unit]
+    #     unitIDs = [unit for unit in unitIDs if re.split('_', unit)[1] == 'good']
+    #     nhypno  = np.min((len(M), units.shape[0]))
+
+
+
+
+
+
+
+
+
+
     
     fr1 = np.array(units[ids1]).T
     fr2 = np.array(units[ids2]).T
         
-    fr1_new = np.zeros((len(ids1) , nhypno))
-    fr2_new = np.zeros((len(ids2) , nhypno))
-
+    fr1_new = np.zeros((len(ids1), nhypno))
+    fr2_new = np.zeros((len(ids2), nhypno))
 
     for i in range(fr1.shape[0]):
-        tmp = sleepy.smooth_data(fr1[i,:], nsmooth)
+        if nsmooth > 0:
+            fr1[i,:] = sleepy.smooth_data(fr1[i,:], nsmooth)
         if pzscore:
             fr1_new[i,:] = (fr1[i,tidx]-fr1[i,tidx].mean()) / fr1[i,tidx].std()
 
     for i in range(fr2.shape[0]):
-        tmp = sleepy.smooth_data(fr2[i,:], nsmooth)
+        if nsmooth > 0:        
+            fr2[i,:] = sleepy.smooth_data(fr2[i,:], nsmooth)
         if pzscore:
             fr2_new[i,:] = (fr2[i,tidx]-fr2[i,tidx].mean()) / fr2[i,tidx].std()
     
@@ -4556,8 +4595,9 @@ def state_correlation_avg(units, ids1, ids2, M, kcuts=[], istate=3, win=60, tbre
         for i in range(fr1.shape[0]):
             for j in range(fr2.shape[0]):        
                 cc, t = state_correlation(fr1[i,:], fr2[j,:], M, 
-                                          win=win, istate=istate, tbreak=tbreak, pplot=False)
-                cc = np.mean(cc, axis=0)            
+                                          win=win, istate=istate, tbreak=tbreak, pplot=pplot)
+                
+                cc = np.nanmean(cc, axis=0)            
                 label = ids1[i] + ' x ' + ids2[j]
                 m = len(t)
                 data += zip(t, cc, [label]*m, [ids1[i]]*m, [ids2[j]]*m)
@@ -4565,8 +4605,8 @@ def state_correlation_avg(units, ids1, ids2, M, kcuts=[], istate=3, win=60, tbre
         for i in range(fr1.shape[0]-1):
             for j in range(i+1, fr2.shape[0]):        
                 cc, t = state_correlation(fr1[i,:], fr2[j,:], M, 
-                                          win=win, istate=istate, tbreak=tbreak, pplot=False)
-                cc = np.mean(cc, axis=0)            
+                                          win=win, istate=istate, tbreak=tbreak, pplot=pplot)
+                cc = np.nanmean(cc, axis=0)            
                 label = ids1[i] + ' x ' + ids2[j]
                 m = len(t)
                 data += zip(t, cc, [label]*m, [ids1[i]]*m, [ids2[j]]*m)
@@ -4583,7 +4623,7 @@ def state_correlation_avg(units, ids1, ids2, M, kcuts=[], istate=3, win=60, tbre
         id1 = dfs.iloc[imax]['id1']
         id2 = dfs.iloc[imax]['id2']
         
-        data += [[tmax, ccmax, label, id1, id2]]
+        data += [[tmax, ccmax, l, id1, id2]]
     
     dfr = pd.DataFrame(data=data, columns=['time', 'cc', 'label', 'id1', 'id2'])
         
@@ -4595,6 +4635,53 @@ def plot_firingrates(units, cell_info, ids, mouse, config_file, tlegend=60, pzsc
                      kcuts=[], tstart=0, tend=-1,
                      pind_axes=True, dt=2.5, nsmooth=0, pnorm_spec=False, box_filt=[], 
                      vm=[], fmax=20, print_unit=False):
+    """
+    Plot firing rates along with EEG spectrogram and hypnogram.
+
+    Parameters
+    ----------
+    units : TYPE
+        DESCRIPTION.
+    cell_info : TYPE
+        DESCRIPTION.
+    ids : TYPE
+        DESCRIPTION.
+    mouse : TYPE
+        DESCRIPTION.
+    config_file : TYPE
+        DESCRIPTION.
+    tlegend : TYPE, optional
+        DESCRIPTION. The default is 60.
+    pzscore : TYPE, optional
+        DESCRIPTION. The default is True.
+    kcuts : TYPE, optional
+        DESCRIPTION. The default is [].
+    tstart : TYPE, optional
+        DESCRIPTION. The default is 0.
+    tend : TYPE, optional
+        DESCRIPTION. The default is -1.
+    pind_axes : TYPE, optional
+        DESCRIPTION. The default is True.
+    dt : TYPE, optional
+        DESCRIPTION. The default is 2.5.
+    nsmooth : TYPE, optional
+        DESCRIPTION. The default is 0.
+    pnorm_spec : TYPE, optional
+        DESCRIPTION. The default is False.
+    box_filt : TYPE, optional
+        DESCRIPTION. The default is [].
+    vm : TYPE, optional
+        DESCRIPTION. The default is [].
+    fmax : TYPE, optional
+        DESCRIPTION. The default is 20.
+    print_unit : TYPE, optional
+        DESCRIPTION. The default is False.
+
+    Returns
+    -------
+    None.
+
+    """
 
     ids = list(ids)
     yticks = [0.1, 0.5, 1, 2, 3, 4, 5, 10, 20, 30, 40, 50, 60, 70, 80, 100]
@@ -4644,8 +4731,6 @@ def plot_firingrates(units, cell_info, ids, mouse, config_file, tlegend=60, pzsc
     # that's different from how np.arrays behave
     units = units.iloc[istart:iend,:]
     SP = SP[:,istart:iend]
-
-
 
     nunits = len(ids)
     ntime = units.shape[0]
@@ -5871,10 +5956,10 @@ def cc_jitter(unit1, unit2, window, sr, plot=True, plt_win=0.5):
 
     Returns
     -------
-    TYPE
-        DESCRIPTION.
-    TYPE
-        DESCRIPTION.
+    np.array
+        time vector.
+    np.array
+        Cross-correlogram.
 
     """
 
@@ -5913,12 +5998,15 @@ def cc_jitter(unit1, unit2, window, sr, plot=True, plt_win=0.5):
     
     if plot:
         plt.figure()
+        ax = plt.subplot(111)
+
+        plt.plot(t[idx], corrCC[idx], 'k')
+        plt.xlabel('Lag (ms)')
         
-        
-        #plt.plot(t[idx], CC[idx])
-        #plt.plot(t[idx], CC1[idx])
-        plt.plot(t[idx], corrCC[idx])
-        
+        ylim = ax.get_ylim()
+        plt.plot([0,0], ylim, 'k--')
+
+        sns.despine()
         
     
     # if plot==True:
@@ -6121,6 +6209,39 @@ def smooth_causal(data, tau):
 def _efilt(x, tau):
     y = (1 / tau) * np.exp(-x / tau)
     return y
-    
 
+
+
+def calculate_lfp_spectrum(ppath, name, LFP, fres=0.5):
+    """
+    calculate EEG and EMG spectrogram used for sleep stage detection.
+    Function assumes that data vectors EEG.mat and EMG.mat exist in recording
+    folder ppath/name; these are used to calculate the powerspectrum
+    fres   -   resolution of frequency axis
     
+    all data saved in "true" mat files
+    :return  EEG Spectrogram, EMG Spectrogram, frequency axis, time axis
+    """
+    
+    SR = sleepy.get_snr(ppath, name) * 2.5
+    print(SR)
+    swin = round(SR)*5
+    fft_win = round(swin/5) # approximate number of data points per second
+    if (fres == 1.0) or (fres == 1):
+        fft_win = int(fft_win)
+    elif fres == 0.5:
+        fft_win = 2*int(fft_win)
+    else:
+        print("Resolution %f not allowed; please use either 1 or 0.5" % fres)
+    
+    # Calculate EEG spectrogram
+    Pxx, f, t = sleepy.spectral_density(LFP, int(swin), int(fft_win), 1/SR)
+
+    spfile = os.path.join(ppath, name, 'lp_' + name + '.mat')    
+    so.savemat(spfile, {'LP':Pxx, 'freq':f, 'dt':t[1]-t[0],'t':t})
+    
+    print(r'Saved LFP Spectrum to file %s.' % spfile)
+    
+    return Pxx, f, t
+
+
