@@ -4969,7 +4969,7 @@ def plot_firingrates(units, cell_info, ids, mouse,
                      kcuts=[], tstart=0, tend=-1,
                      pind_axes=True, dt=2.5, nsmooth=0, 
                      pnorm_spec=False, box_filt=[], 
-                     vm=[], fmax=20, print_unit=False, show_sigma=True):
+                     vm=[], fmax=20, print_unit=False, show_sigma=False):
     """
     Plot firing rates along with EEG spectrogram and hypnogram.
 
@@ -5128,10 +5128,10 @@ def plot_firingrates(units, cell_info, ids, mouse,
         yrange = 0.73    
     else:
         yrange = 0.63
+        sigma = [10, 15]
+        isigma = np.where((freq>=sigma[0])&(freq<=sigma[1]))[0]
 
         if pnorm_spec:            
-            sigma = [10, 15]
-            isigma = np.where((freq>=sigma[0])&(freq<=sigma[1]))[0]
             
             sigma_pow = SP[isigma,:].mean(axis=0)        
         else:
