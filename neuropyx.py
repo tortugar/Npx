@@ -20,7 +20,6 @@ import re
 import scipy.stats as stats
 from scipy import linalg
 import matplotlib as mpl
-from tqdm import tqdm
 from sklearn.decomposition import PCA
 import math
 # debugger
@@ -28,9 +27,9 @@ import pdb
 
 
 
-def brstate_class(np_path,sleep_path,sleep_rec,mouse,tend=-1,tstart=0, pzscore=True, 
+def brstate_class(np_path, sleep_path, sleep_rec, mouse, tend=-1, tstart=0, pzscore=True, 
                 class_mode='', pearson=True, pnorm_spec=True, single_mice=True, 
-                ma_thr=10, ma_rem_exception=False,
+                ma_thr=10, ma_rem_exception=False, box_filt=[],
                 pplot=True, config_file='mouse_config.txt'):
     """
     calculate average firing rate during each brain state and then 
@@ -128,6 +127,32 @@ def brstate_class(np_path,sleep_path,sleep_rec,mouse,tend=-1,tstart=0, pzscore=T
     else: 
         M = M[istart:iend]
 
+    # calculate sigma power
+    if pearson:
+        band=[10,15]
+        state_map = {1:'REM', 2:'Wake', 3:'NREM'}
+        ddir = os.path.join(sleep_path, sleep_rec)
+        P = so.loadmat(os.path.join(ddir, 'sp_%s.mat' % sleep_rec), squeeze_me=True)
+        SP = P['SP']
+        freq = P['freq']
+        ifreq = np.where((freq >= band[0]) & (freq <= band[1]))[0]
+        df = freq[1] - freq[0]
+        
+        if len(box_filt) > 0:
+            filt = np.ones(box_filt)
+            filt = np.divide(filt, filt.sum())
+            SP = scipy.signal.convolve2d(SP, filt, boundary='symm', mode='same')
+        
+        if pnorm_spec:
+            sp_mean = SP.mean(axis=1)
+            SP = np.divide(SP, np.tile(sp_mean, (SP.shape[1], 1)).T)
+            pow_band = SP[ifreq, :].mean(axis=0)
+        else:
+            pow_band = SP[ifreq,:].sum(axis=0)*df
+        
+        pow_band = pow_band[istart:iend]
+
+
     # make a nested dict that has each of the units and inside the fr values for all the different sleep bins
     units_stateval = {}
     for unit in units:
@@ -159,7 +184,7 @@ def brstate_class(np_path,sleep_path,sleep_rec,mouse,tend=-1,tstart=0, pzscore=T
         d = {'state':state, 'val':val}
         df = pd.DataFrame(d)
 
-        res = pg.anova(data=df, dv='val', between='state')
+        res  = pg.anova(data=df, dv='val', between='state')
         res2 = pg.pairwise_tukey(data=df, dv='val', between='state')
  
         def _get_mean(s):
@@ -179,6 +204,15 @@ def brstate_class(np_path,sleep_path,sleep_rec,mouse,tend=-1,tstart=0, pzscore=T
                 
                 if cond1['p-tukey'].iloc[0] < 0.05 and cond2['p-tukey'].iloc[0] < 0.05 and res['p-unc'].iloc[0] < 0.05:
                     roi_type = 'R-max'
+
+            #REM-Off (R-Off) 
+            elif (rmean < wmean) and (rmean < nmean):  
+               cond1 = res2[(res2['A'] == 'R') & (res2['B'] == 'W')]
+               cond2 = res2[(res2['A'] == 'R') & (res2['B'] == 'N')]
+   
+               if cond1['p-tukey'].iloc[0] < 0.05 and cond2['p-tukey'].iloc[0] < 0.05 and res['p-unc'].iloc[0] < 0.05:
+                   roi_type = 'R-Off'        
+                   
             # W-max
             elif (wmean > nmean) and (wmean > rmean):  
                 cond1 = res2[(res2['A'] == 'N') & (res2['B'] == 'W')]
@@ -186,6 +220,7 @@ def brstate_class(np_path,sleep_path,sleep_rec,mouse,tend=-1,tstart=0, pzscore=T
     
                 if cond1['p-tukey'].iloc[0] < 0.05 and cond2['p-tukey'].iloc[0] < 0.05 and res['p-unc'].iloc[0] < 0.05:
                     roi_type = 'W-max'
+                    
             # N-max 
             elif (nmean > wmean) and (nmean > rmean):  
                 cond1 = res2[(res2['A'] == 'N') & (res2['B'] == 'W')]
@@ -193,13 +228,6 @@ def brstate_class(np_path,sleep_path,sleep_rec,mouse,tend=-1,tstart=0, pzscore=T
     
                 if cond1['p-tukey'].iloc[0] < 0.05 and cond2['p-tukey'].iloc[0] < 0.05 and res['p-unc'].iloc[0] < 0.05:
                     roi_type = 'N-max'
-            #Rem off 
-            elif (rmean < wmean) and (rmean < nmean):  
-               cond1 = res2[(res2['A'] == 'R') & (res2['B'] == 'W')]
-               cond2 = res2[(res2['A'] == 'R') & (res2['B'] == 'N')]
-   
-               if cond1['p-tukey'].iloc[0] < 0.05 and cond2['p-tukey'].iloc[0] < 0.05 and res['p-unc'].iloc[0] < 0.05:
-                   roi_type = 'R-Off '        
             else:
                 roi_type = 'X'
                             
@@ -250,21 +278,21 @@ def brstate_class(np_path,sleep_path,sleep_rec,mouse,tend=-1,tstart=0, pzscore=T
             data.append(tmp)
             
         if pearson:
-            band=[10,15]
-            state_map = {1:'REM', 2:'Wake', 3:'NREM'}
-            ddir = os.path.join(sleep_path, sleep_rec)
-            P = so.loadmat(os.path.join(ddir, 'sp_%s.mat' % sleep_rec), squeeze_me=True)
-            SP = P['SP']
-            freq = P['freq']
-            ifreq = np.where((freq >= band[0]) & (freq <= band[1]))[0]
-            df = freq[1] - freq[0]
+            # band=[10,15]
+            # state_map = {1:'REM', 2:'Wake', 3:'NREM'}
+            # ddir = os.path.join(sleep_path, sleep_rec)
+            # P = so.loadmat(os.path.join(ddir, 'sp_%s.mat' % sleep_rec), squeeze_me=True)
+            # SP = P['SP']
+            # freq = P['freq']
+            # ifreq = np.where((freq >= band[0]) & (freq <= band[1]))[0]
+            # df = freq[1] - freq[0]
             
-            if pnorm_spec:
-                sp_mean = SP.mean(axis=1)
-                SP = np.divide(SP, np.tile(sp_mean, (SP.shape[1], 1)).T)
-                pow_band = SP[ifreq, :].mean(axis=0)
-            else:
-                pow_band = SP[ifreq,:].sum(axis=0)*df
+            # if pnorm_spec:
+            #     sp_mean = SP.mean(axis=1)
+            #     SP = np.divide(SP, np.tile(sp_mean, (SP.shape[1], 1)).T)
+            #     pow_band = SP[ifreq, :].mean(axis=0)
+            # else:
+            #     pow_band = SP[ifreq,:].sum(axis=0)*df
             for s in [1,2,3]:
                 idx = np.where(M==s)[0]
                 r,p = scipy.stats.pearsonr(units[unit][idx], pow_band[idx])
@@ -2197,7 +2225,7 @@ def pc_reconstruction(units, cell_info, ndim=3, nsmooth=0, pnorm=True, pzscore=F
 
 
 def pc_reconstruction2(units, cell_info, time_idx=[], ndim=3, nsmooth=0, detrend=False, pnorm=True, pzscore=False, 
-                      pc_sign=[], dt=2.5, kcuts=[], pplot=True, sign_plot=True):
+                      pc_sign=[], dt=2.5, kcuts=[], pearson=False, pplot=True, sign_plot=True):
     """
     Use whole time axis for smoothing and z-scoring.
     Calculate SVD only using time points in @time_idx and reconstruct firing rates
@@ -2219,8 +2247,8 @@ def pc_reconstruction2(units, cell_info, time_idx=[], ndim=3, nsmooth=0, detrend
 
     Parameters
     ----------
-    units : TYPE
-        DESCRIPTION.
+    units : pd.DataFrame
+        Each column is a unit, with the unit ID (str) as column name.
     cell_info : TYPE
         DESCRIPTION.
     time_idx : TYPE, optional
@@ -2242,6 +2270,8 @@ def pc_reconstruction2(units, cell_info, time_idx=[], ndim=3, nsmooth=0, detrend
         Discard the time interval ranging from kcut[0] to kcut[1] seconds
     sign_plot: bool
         It True, plot PCs after multiplying with pc_sign
+    pearson: bool
+        If True, calculate pearson correlation between each PC and firing rate
 
     Returns
     -------
@@ -2362,6 +2392,18 @@ def pc_reconstruction2(units, cell_info, time_idx=[], ndim=3, nsmooth=0, detrend
     units_hat = pd.DataFrame(data=Yhat, columns=unitIDs)
     units = pd.DataFrame(data=Y*np.sqrt(nsample-1), columns=unitIDs)
     
+    if pearson:
+        for j in range(ndim):
+            p = []
+            cc = []
+            for i,ID in enumerate(unitIDs):
+                r = R[i,:]        
+                res = scipy.stats.pearsonr(r, PC[j,:])
+                p.append(res.pvalue)
+                cc.append(res.statistic)
+            df['r' + str(j+1)] = cc
+            df['p' + str(j+1)] = p
+                    
     return C, df, units, units_hat
 
 
@@ -2588,37 +2630,41 @@ def optimal_direction(dfc, pref_direction, thr=0, pplot=True, ax='', brain_regio
     
 
 
-def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], max_laser=20, local_pzscore=True,
+def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], min_laser=20, pzscore_pc=False, local_pzscore=True,
                         pplot=True, ci=None, refractory_rule=False, ma_thr=10, ma_rem_exception=False,
                         config_file='mouse_config.txt'):
     """
     Calculated the time course of the provided PCs relative to the laser onset.
-    The function generates two 
 
     Parameters
     ----------
-    PC : TYPE
-        DESCRIPTION.
-    pre : TYPE
-        DESCRIPTION.
-    post : TYPE
-        DESCRIPTION.
-    M : TYPE
-        DESCRIPTION.
-    mouse : TYPE
-        DESCRIPTION.
+    PC : np.array
+        Each row corresponds to one PC.
+    pre : float
+        Time before laser onset.
+    post : float
+        Time after laser onset.
+    M : np.array
+        Hypnogram.
+    mouse : str
+        Mouse name.
     kcuts : TYPE, optional
         DESCRIPTION. The default is [].
-    max_laser : TYPE, optional
-        DESCRIPTION. The default is 20.
-    local_pzscore : TYPE, optional
+    min_laser : float, optional
+        Minimum duration of laser train. If laser duration < $min_laser, 
+        disregard the laser trial.
+    pzscore_pc : bool, optional
+        If true, z-score the PCs (across entire recording)
+    local_pzscore : bool, optional
         DESCRIPTION. The default is True.
-    pplot : TYPE, optional
-        DESCRIPTION. The default is True.
-    ci : TYPE, optional
-        DESCRIPTION. The default is None.
+    pplot : bool, optional
+        If True, plot figures summarizing results.
+    ci : float or None, optional
+        Confidence interval for plots.
     refractory_rule : TYPE, optional
         DESCRIPTION. The default is False.
+    config_file : str, optional
+        Mouse recordings configuration file.
 
     Returns
     -------
@@ -2628,6 +2674,7 @@ def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], max_laser=20, local_p
                       'state', 'success', 'refractory']
 
     """
+    dt = 2.5
     
     ddir = load_config(config_file)[mouse]['SL_PATH']
     ppath, name = os.path.split(ddir)
@@ -2635,7 +2682,6 @@ def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], max_laser=20, local_p
     ndim = PC.shape[0]
     tidx = np.arange(0, nhypno)
     
-    dt = 2.5
     # NEW 07/01/22:
     # get the indices (in brainstate time) that we're going to completely discard:
     if len(kcuts) > 0:
@@ -2658,21 +2704,20 @@ def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], max_laser=20, local_p
         for s in seq:
             if np.round(len(s)*dt) <= ma_thr:
                 if ma_rem_exception:
-                    if (s[0]>1) and (M[s[0] - 1] != 1):
+                    if (s[0]>0) and (M[s[0] - 1] != 1):
                         M[s] = 3
                 else:
-                    M[s] = 4
+                    M[s] = 3
     ###########################################################################
             
     if os.path.isfile(os.path.join(ddir, 'laser_%s.mat' % name)):
-
         sr = sleepy.get_snr(ppath, name)
-        nbin = int(np.round(sr)*2.5)
+        nbin = int(np.round(sr)*dt)
         dt = nbin * (1.0/sr)
         
         ipre = int(pre/dt)
         ipost = int(post/dt)
-        t = np.arange(-ipre, ipost) * dt
+        t = np.arange(-ipre, ipost)*dt
         nt = len(t)
     
         #######################################################################
@@ -2701,11 +2746,16 @@ def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], max_laser=20, local_p
             l = 'pc' + str(p)
             label.extend([l]*nt)
 
+        # zscore pcs:
+        if pzscore_pc:
+            for i in range(PC.shape[0]):
+                PC[i,:] = (PC[i,:]- PC[i,:].mean()) / PC[i,:].std()
+
         data = []
         for i,j in zip(idxs, idxe):
             if i > ipre and i+ipost < nhypno:
                 
-                if (j-i)*dt < max_laser:
+                if (j-i)*dt < min_laser:
                     continue
                 
                 idx = np.arange(i-ipre, i+ipost).astype('int')
@@ -2720,6 +2770,7 @@ def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], max_laser=20, local_p
                 m_cut = np.tile(M[idx], (ndim,))
                 
                 vec = np.reshape(pc_cut, (ndim*nt,))
+                
                 vecz = np.reshape(pc_cut_z, (ndim*nt,))
                 tvec = np.tile(t, (ndim,))
                 
@@ -2803,7 +2854,173 @@ def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], max_laser=20, local_p
                                             
     return df
         
+
+
+def laser_triggered_frs(units, pre, post, mouse, kcuts=[], ma_thr=10, ma_rem_exception=True,
+                        pzscore=True, nsmooth=0, detrend=True, min_laser=20,
+                        config_file='mouse_config.txt'):
+    """
+    
+
+    Parameters
+    ----------
+    units : TYPE
+        DESCRIPTION.
+    pre : TYPE
+        DESCRIPTION.
+    post : TYPE
+        DESCRIPTION.
+    mouse : TYPE
+        DESCRIPTION.
+    kcuts : TYPE, optional
+        DESCRIPTION. The default is [].
+    ma_thr : TYPE, optional
+        DESCRIPTION. The default is 10.
+    ma_rem_exception : TYPE, optional
+        DESCRIPTION. The default is True.
+    pzscore : TYPE, optional
+        DESCRIPTION. The default is True.
+    nsmooth : TYPE, optional
+        DESCRIPTION. The default is 0.
+    detrend : TYPE, optional
+        DESCRIPTION. The default is True.
+    min_laser : TYPE, optional
+        DESCRIPTION. The default is 20.
+    config_file : TYPE, optional
+        DESCRIPTION. The default is 'mouse_config.txt'.
+
+    Returns
+    -------
+    df : TYPE
+        DESCRIPTION.
+
+    """
+    
+    dt = 2.5
+    
+    ddir = load_config(config_file)[mouse]['SL_PATH']
+    ppath, name = os.path.split(ddir)
+    M = sleepy.load_stateidx(ppath, name)[0]
+    nhypno = M.shape[0]
+    ndim = units.shape[1]
+    tidx = np.arange(0, nhypno)
+    
+    # NEW 07/01/22:
+    # get the indices (in brainstate time) that we're going to completely discard:
+    if len(kcuts) > 0:
+        kidx = []
+        for kcut in kcuts:
+            a = int(kcut[0]/dt)
+            b = int(kcut[-1]/dt)
+            if b > len(M):
+                b = len(M)
+            kidx += list(np.arange(a, b))
         
+        tidx = np.setdiff1d(tidx, kidx)
+        M = M[tidx]
+        nhypno = len(tidx)
+    ###########################################################################    
+
+    # flatten out MAs #########################################################
+    if ma_thr>0:
+        seq = sleepy.get_sequences(np.where(M==2)[0])
+        for s in seq:
+            if np.round(len(s)*dt) <= ma_thr:
+                if ma_rem_exception:
+                    if (s[0]>0) and (M[s[0] - 1] != 1):
+                        M[s] = 3
+                else:
+                    M[s] = 3
+    ###########################################################################
+
+
+    if os.path.isfile(os.path.join(ddir, 'laser_%s.mat' % name)):
+        sr = sleepy.get_snr(ppath, name)
+        nbin = int(np.round(sr)*dt)
+        dt = nbin * (1.0/sr)
+        
+        ipre = int(pre/dt)
+        ipost = int(post/dt)
+        t = np.arange(-ipre, ipost)*dt
+        nt = len(t)
+    
+        #######################################################################
+        # get laser start and end index after excluding kcuts: ################
+        lsr = so.loadmat(os.path.join(ddir, 'laser_%s.mat' % name), squeeze_me=True)['laser']
+
+        idxs, idxe = sleepy.laser_start_end(lsr)
+        idxs = [int(i/nbin) for i in idxs]
+        idxe = [int(i/nbin) for i in idxe]
+                
+        laser_idx = []
+        for (si,sj) in zip(idxs, idxe):
+            laser_idx += list(range(si,sj+1))
+
+        nlsr = int(np.floor(lsr.shape[0]/nbin))
+        laser = np.zeros((nlsr,))
+        laser[laser_idx] = 1
+        laser = laser[tidx]
+
+        idxs = [s[0]  for s in sleepy.get_sequences(np.where(laser == 1)[0])]
+        idxe = [s[-1] for s in sleepy.get_sequences(np.where(laser == 1)[0])]
+        #######################################################################
+
+        unitIDs = [unit for unit in units.columns if '_' in unit]    
+        nvar    = len(unitIDs) 
+        R = np.zeros((nvar, nhypno)) # dimensions: number of units x time bins
+        for i,unit in enumerate(unitIDs):
+
+            tmp = sleepy.smooth_data(np.array(units[unit]),nsmooth)
+            tmp = tmp[tidx]
+            if detrend:
+                tmp = scipy.signal.detrend(tmp)
+    
+            if pzscore:
+                R[i,:] = (tmp - tmp.mean()) / tmp.std()
+            else:
+                R[i,:] = tmp
+    
+    
+        label = []
+        for p in range(0, nvar):
+            l = unitIDs[p]
+            label.extend([l]*nt)
+    
+        ms_id = [mouse + '_' + i for i in label]
+    
+        data = []
+        for i,j in zip(idxs, idxe):
+            if i > ipre and i+ipost < nhypno:
+                
+                if (j-i)*dt < min_laser:
+                    continue
+                
+                idx = np.arange(i-ipre, i+ipost).astype('int')
+                r_cut = R[:,idx]
+    
+                m_lsr = M[i:j+1]
+                # repeat m_cut ndim-times 
+                m_cut = np.tile(M[idx], (nvar,))
+                
+                vec = np.reshape(r_cut, (nvar*nt,))
+                tvec = np.tile(t, (ndim,))
+        
+                lsr_rem = 'no'
+                if 1 in m_lsr:
+                    lsr_rem='yes'
+                    
+                start_state = M[i]
+
+                data += zip([mouse]*nt*nvar, tvec, vec, 
+                            label, ms_id, [i]*nt*nvar, [start_state]*nt*nvar,
+                            m_cut, [lsr_rem]*nt*nvar)
+        
+        df = pd.DataFrame(data=data, columns=['mouse', 'time', 'fr',  
+                                              'ID', 'ms_id', 'lsr_start', 'start_state',
+                                              'state', 'success'])    
+    return df
+    
+
                 
 def plot_trajectories(PC, M, pre, post, istate=1, dt=2.5, ma_thr=10, ma_rem_exception=False,
                       kcuts=[],min_dur=0, pre_state=0, state_num=[], ax='', lw=1, coords=[0,1], mouse=''):
@@ -3202,10 +3419,6 @@ def last_subspace_point(istate, PC, meanc, Ci, scale=np.sqrt(2)):
     return ifirst
     
     
-    
-
-
-
 
 def svc_components(units, ndim=3, nsmooth=0):
 
@@ -3376,6 +3589,8 @@ def remrem_sections(units, cell_info, M, nsections=5, nsections_rem=0, nsmooth=0
         DESCRIPTION.
 
     """
+    refr_func = refr_period()
+    
     dt = 2.5
     unitIDs = [unit for unit in units.columns if '_' in unit]
     unitIDs = [unit for unit in unitIDs if re.split('_', unit)[1] == 'good']
@@ -3432,6 +3647,11 @@ def remrem_sections(units, cell_info, M, nsections=5, nsections_rem=0, nsmooth=0
         if len(seq) >= 2:
             for (si, sj) in zip(seq[0:-1], seq[1:]):                
                 irem_idx = np.arange(si[-1]+1, sj[0], dtype='int')
+                rem_id = si[0]
+                
+                # the refractory duration:
+                refr_dur = np.exp(refr_func(len(si)*dt))
+                
                 
                 # Apply refractory period:
                 if refractory_rule:
@@ -3477,35 +3697,44 @@ def remrem_sections(units, cell_info, M, nsections=5, nsections_rem=0, nsmooth=0
                     single_event_nrw.append(np.nanmean(fr_up[mi]))
     
                 idur = len(irem_idx)*dt
-                data += zip([ID]*nsections, [ev]*nsections, list(range(1, nsections+1)), single_event_nrem, ['NREM']*nsections, [idur]*nsections, [region]*nsections, [rem_pre]*nsections)
-                data += zip([ID]*nsections, [ev]*nsections, list(range(1, nsections+1)), single_event_wake, ['Wake']*nsections, [idur]*nsections, [region]*nsections, [rem_pre]*nsections)
-                data += zip([ID]*nsections, [ev]*nsections, list(range(1, nsections+1)), single_event_nrw, ['NRW']*nsections, [idur]*nsections, [region]*nsections,   [rem_pre]*nsections)
+                
+                mcut = M[irem_idx]
+                nrem_dur = len(np.where(mcut==3)[0])*dt 
+                wake_dur = len(np.where(mcut==2)[0])*dt 
+                
+                mcut2 = np.zeros(mcut.shape)
+                mcut2[mcut==3] = dt
+                mcut_csum = np.cumsum(mcut2)
+                # isplit is the first point that is not anymore in the refractory period
+                isplit = np.where(mcut_csum >= refr_dur)[0][0]
+                refr_perc = isplit / idur
+                
+                data += zip([ID]*nsections, [rem_id]*nsections, [ev]*nsections, list(range(1, nsections+1)), single_event_nrem, ['NREM']*nsections, [nrem_dur]*nsections, [region]*nsections, [rem_pre]*nsections, [refr_perc]*nsections)
+                data += zip([ID]*nsections, [rem_id]*nsections, [ev]*nsections, list(range(1, nsections+1)), single_event_wake, ['Wake']*nsections, [wake_dur]*nsections, [region]*nsections, [rem_pre]*nsections, [refr_perc]*nsections)
+                data += zip([ID]*nsections, [rem_id]*nsections, [ev]*nsections, list(range(1, nsections+1)), single_event_nrw,  ['NRW']*nsections,  [idur]*nsections,     [region]*nsections, [rem_pre]*nsections, [refr_perc]*nsections)
 
                 if nsections_rem > 0:
                     # REM-pre
                     fr_pre = time_morph(fr[si], nsections_rem)
                     dur = len(si)*dt
-                    #if ID == '5_good':
-                    #    pdb.set_trace()
                     
-                    data += zip([ID]*nsections_rem, [ev]*nsections_rem, 
+                    data += zip([ID]*nsections_rem, [rem_id]*nsections_rem, [ev]*nsections_rem, 
                                 list(range(1, nsections_rem+1)), 
                                 fr_pre, ['REM_pre']*nsections_rem, [rem_pre]*nsections_rem, 
-                                [region]*nsections_rem, [dur]*nsections_rem)            
+                                [region]*nsections_rem, [dur]*nsections_rem, [refr_perc]*nsections_rem)            
                     #REM-post
                     fr_post = time_morph(fr[sj], nsections_rem)
                     dur = len(sj)*dt
-                    data += zip([ID]*nsections_rem, [ev]*nsections_rem, 
+                    data += zip([ID]*nsections_rem, [rem_id]*nsections_rem, [ev]*nsections_rem, 
                                 list(range(1, nsections_rem+1)), 
                                 fr_post, ['REM_post']*nsections_rem, [dur]*nsections_rem, 
-                                [region]*nsections_rem, [rem_pre]*nsections)            
+                                [region]*nsections_rem, [rem_pre]*nsections, [refr_perc]*nsections_rem)            
 
                 ev += 1
     
-    df_trials = pd.DataFrame(columns = ['ID', 'event', 'section', 'fr', 'state', 'idur', 'brain_region', 'rem_pre'], data=data)
-    
+    df_trials = pd.DataFrame(columns = ['ID', 'rem_id', 'event', 'section', 'fr', 'state', 'idur', 'brain_region', 'rem_pre', 'refr_perc'], data=data)
     dfm = df_trials.groupby(['ID', 'section', 'state', 'brain_region']).mean().reset_index()
-    dfm = dfm[['ID', 'section', 'fr', 'state', 'brain_region']]
+    dfm = dfm[['ID', 'section', 'fr', 'state', 'brain_region', 'refr_perc']]
     
     data = []
     for ID in dfm.ID.unique():
@@ -3522,6 +3751,110 @@ def remrem_sections(units, cell_info, M, nsections=5, nsections_rem=0, nsmooth=0
     df_stats = pd.DataFrame(data=data, columns=['ID', 'state', 's', 'r', 'p', 'brain_region'])
     
     return df_trials, dfm, df_stats                
+
+
+def refr_period(sig_level=0.01):
+    from statistics import NormalDist
+    
+    # Define exact refractory period
+    plight = True
+    # Parameter for dark phase:
+    # long cycles
+    if not plight: 
+        a_mu_long = 0.89
+        b_mu_long = 80.23
+        c_mu_long = 1.94
+        
+        a_sig_long = -0.16
+        b_sig_long = 6.30
+        c_sig_long = 1.25
+        
+        # short cycles
+        a_mu_short = -0.72
+        b_mu_short = 0
+        c_mu_short = 7.11
+        
+        a_sig_short = -0.0059
+        b_sig_short = 1.012
+        c_sig_short = np.nan
+        
+        a_klong = 0.29
+        b_klong = 0
+        c_klong = -0.30
+    
+    else:
+        a_mu_long = 0.62
+        b_mu_long = 27.42
+        c_mu_long = 3.4
+        
+        a_sig_long = -0.44
+        b_sig_long = 134.42
+        c_sig_long = 2.9
+        
+        # short cycles
+        a_mu_short = -0.57
+        b_mu_short = 0
+        c_mu_short = 6.33
+        
+        a_sig_short = -0.0022
+        b_sig_short = 0.7
+        c_sig_short = np.nan
+        
+        a_klong = 0.17
+        b_klong = 0
+        c_klong = 0.14
+        
+    
+    k_long = lambda x: np.min((a_klong * np.log(x + b_klong) + c_klong, 1))
+    #k_short = lambda x: 1 - k_long(x)
+            
+    
+    mu_long = lambda x: a_mu_long * np.log(x + b_mu_long) + c_mu_long
+    #mu_short = lambda x: a_mu_short * np.log(x + b_mu_short) + c_mu_short
+    
+    sig_long = lambda x: a_sig_long * np.log(x + b_sig_long) + c_sig_long
+    #sig_short = lambda x: a_sig_short * x + b_sig_short
+    
+    
+    #pdf_long =  lambda ln,rem: k_long(rem)  * NormalDist(mu=mu_long(rem),  sigma=sig_long(rem)).pdf(ln)
+    #pdf_short = lambda ln,rem: k_short(rem) * NormalDist(mu=mu_short(rem), sigma=sig_short(rem)).pdf(ln)
+    
+    
+    # x_is = np.arange(15, 200)
+    # ln = np.arange(0.1, 10, 0.01)
+    # y_is = []
+    # ln_last = 0
+    # for rem in x_is:
+    #     if rem < 150:
+    #         y_long, y_short = [], []
+    #         for n in ln:
+    #             y_long.append(pdf_long(n, rem))
+    #             y_short.append(pdf_short(n, rem))
+                
+    #         y_long = np.array(y_long)
+    #         y_short = np.array(y_short)
+            
+    #         d = y_long-y_short
+    #         i = np.where(d > 0)[0][0]
+            
+    #         y_is.append(ln[i])
+    #         ln_last = ln[i]
+    #     else:
+    #         y_is.append(ln_last)
+        
+    ################################
+    
+    # #%%
+    # # Define refractory period
+    # x = np.arange(1, 240)
+    # y1 = []
+    # y2 = []
+    # for i in x:
+    #     y1.append( NormalDist(mu = mu_long(i), sigma = sig_long(i)).inv_cdf(0.01) )
+    #     y2.append( NormalDist(mu = mu_long(i), sigma = sig_long(i)).inv_cdf(0.001) )
+    
+
+    return lambda x: NormalDist(mu = mu_long(x), sigma = sig_long(x)).inv_cdf(sig_level)
 
 
 
@@ -4631,10 +4964,12 @@ def state_correlation_avg(units, ids1, ids2, M, kcuts=[], istate=3, win=60, tbre
 
 
 
-def plot_firingrates(units, cell_info, ids, mouse, config_file, tlegend=60, pzscore=True, 
+def plot_firingrates(units, cell_info, ids, mouse, 
+                     config_file, tlegend=60, pzscore=True, 
                      kcuts=[], tstart=0, tend=-1,
-                     pind_axes=True, dt=2.5, nsmooth=0, pnorm_spec=False, box_filt=[], 
-                     vm=[], fmax=20, print_unit=False):
+                     pind_axes=True, dt=2.5, nsmooth=0, 
+                     pnorm_spec=False, box_filt=[], 
+                     vm=[], fmax=20, print_unit=False, show_sigma=True):
     """
     Plot firing rates along with EEG spectrogram and hypnogram.
 
@@ -4676,6 +5011,8 @@ def plot_firingrates(units, cell_info, ids, mouse, config_file, tlegend=60, pzsc
         DESCRIPTION. The default is 20.
     print_unit : TYPE, optional
         DESCRIPTION. The default is False.
+    show_sigma: bool, optional
+        If True, also show sigma power below spectrogram
 
     Returns
     -------
@@ -4787,7 +5124,33 @@ def plot_firingrates(units, cell_info, ids, mouse, config_file, tlegend=60, pzsc
     axes_cbar.set_alpha(0.0)
     sleepy._despine_axes(axes_cbar)
     
-    yrange = 0.73    
+    if not show_sigma:    
+        yrange = 0.73    
+    else:
+        yrange = 0.63
+
+        if pnorm_spec:            
+            sigma = [10, 15]
+            isigma = np.where((freq>=sigma[0])&(freq<=sigma[1]))[0]
+            
+            sigma_pow = SP[isigma,:].mean(axis=0)        
+        else:
+            dfreq = freq[2] - freq[1]
+            sigma_pow = SP[isigma, :].sum(axis=0)*dfreq
+                    
+        # show sigmapower
+        axes_sig = plt.axes([0.1, 0.75, 0.8, 0.07], sharex=axes_brs)
+        
+        #pdb.set_trace()
+        axes_sig.plot(t, sigma_pow, color='gray')
+        axes_sig.set_xlim([t[0], t[-1]])
+        axes_sig.set_ylabel('$\mathrm{\sigma}$ power')
+
+        axes_sig.spines["top"].set_visible(False)
+        axes_sig.spines["right"].set_visible(False)
+        axes_sig.spines["bottom"].set_visible(False)
+        axes_sig.axes.get_xaxis().set_visible(False)
+        
     if pind_axes:
         palette = sns.color_palette("husl", nunits)
         yborder = (yrange/nunits)*0.3        
@@ -5019,17 +5382,17 @@ def plot_hypnogram(M, dt=2.5, axes_brs=''):
     axes_brs.spines["bottom"].set_visible(False)
     axes_brs.spines["left"].set_visible(False)
 
-    
-
-
 
 
 def fr_infraslow(units, cell_info, mouse, ids=[], pzscore=True, dt=2.5, nsmooth=0, ma_thr=10, 
-                 ma_rem_exception=False, ma_mode=True, kcut=[], state=3, peeg2=False,
+                 ma_rem_exception=False, ma_mode=True, kcuts=[], state=3, peeg2=False,
                  band=[10,15], min_dur=120, win=100, 
-                 pnorm=False, spec_norm=True, spec_filt=False, box=[1,4]):
+                 pnorm=False, spec_norm=True, spec_filt=False, box=[1,4], 
+                 ma_thr_exception=True,
+                 config_file='mouse_config.txt'):
     """
-    Calculate FFT of firing rates for consolidated bouts of NREM sleep. 
+    Calculate FFT of firing rates for consolidated bouts of NREM sleep and compare with
+    FFT of sigma power (= infraslow rhythm)
 
     Parameters
     ----------
@@ -5076,26 +5439,50 @@ def fr_infraslow(units, cell_info, mouse, ids=[], pzscore=True, dt=2.5, nsmooth=
 
     Returns
     -------
-    df : TYPE
-        DESCRIPTION.
+    df : pd.DataFrame
+        with columns ['mouse', 'freq', 'pow', 'ID'].
 
     """        
+    sdt = 2.5
     min_dur = np.max([win*2.5, min_dur])
     
-    path = load_config('mouse_config.txt')[mouse]['SL_PATH']
+    path = load_config(config_file)[mouse]['SL_PATH']
     ppath, file = os.path.split(path)
     M = sleepy.load_stateidx(ppath, file)[0]
         
+    # flatten out MAs #########################################################
+    if ma_thr>0:
+        seq = sleepy.get_sequences(np.where(M==2)[0])
+        for s in seq:
+            if np.round(len(s)*sdt) <= ma_thr:
+                if ma_rem_exception:
+                    if (s[0]>1) and (M[s[0] - 1] != 1):
+                        M[s] = 3
+                else:
+                    M[s] = 3
+    ###########################################################################
+    
     nhypno = np.min((units.shape[0], M.shape[0]))
     tidx = np.arange(0, nhypno)    
-    if len(kcut) > 0:
-        kidx = np.arange(int(kcut[0]/dt), int(kcut[-1]/dt))
+
+    # NEW 07/01/22:
+    # get the indices (in brainstate time) that we're going to completely discard:
+    if len(kcuts) > 0:
+        kidx = []
+        for kcut in kcuts:
+            a = int(kcut[0]/dt)
+            b = int(kcut[-1]/dt)
+            if b > len(M):
+                b = len(M)
+            kidx += list(np.arange(a, b))
+        
         tidx = np.setdiff1d(tidx, kidx)
-        nhypno = len(tidx)
-    M = M[0:nhypno]
+        M = M[tidx]
+        nhypno = len(tidx)        
+    ###########################################################################    
 
     unitIDs = [unit for unit in units.columns if re.split('_', unit)[1] == 'good']
-    nsample = units.shape[0]   # number of time points
+    nsample = len(tidx)   # number of time points
     if ids == []:
         ids = unitIDs
     nvar    = len(ids)     # number of units    
@@ -5154,7 +5541,7 @@ def fr_infraslow(units, cell_info, mouse, ids=[], pzscore=True, dt=2.5, nsmooth=
     # Transform %Spec to ndarray
     SpecVec = np.array(Spec).mean(axis=0)
     data = []
-    #pdb.set_trace()
+
     if pnorm==True:
         SpecVec = SpecVec / SpecVec.mean()#/LA.norm(SpecMx[i,:])    
     data += zip([mouse]*len(f), f, SpecVec, ['spec']*len(f))    
@@ -5175,8 +5562,17 @@ def fr_infraslow(units, cell_info, mouse, ids=[], pzscore=True, dt=2.5, nsmooth=
         data += zip([mouse]*len(f), f, UnitMx[i,:], [unit]*len(f))
         
     df = pd.DataFrame(data=data, columns=['mouse', 'freq', 'pow', 'ID'])
+
+    # todo: add pearson correlation
+    idx = np.where(M==3)[0]
+    data = []
+    for i,unit in enumerate(ids):
+        r,p = scipy.stats.pearsonr(units[unit][idx], pow_band[idx])
+        data += [[unit, r, p]]
+
+    df_stats = pd.DataFrame(data=data, columns=['ID', 'r2', 'p'])
         
-    return df
+    return df, df_stats
 
 
 
@@ -5624,7 +6020,6 @@ def is_cycle(mouse, units, band, ids=[], mouse_config='mouse_config.txt',
 
     P = so.loadmat(os.path.join(ppath, name, 'sp_' + name + '.mat'), squeeze_me=True)
     SPEEG = P['SP']
-    #t = P['t']
     freq = P['freq']
     dfreq = freq[1]-freq[0]
     isigma = np.where((freq>=band[0])&(freq<=band[1]))[0]
@@ -5768,6 +6163,137 @@ def get_cycle_perc(M, si, nsections, min_irem_dur=0, wake_perc=1, dt=2.5):
         i += 1
     
     return perc, i
+    
+
+
+def laser_triggered_train(ppath, name, train, pre, post, nbin=1, offs=0, iters=1, istate=-1, sf=0, laser_end=-1, pplot=True):
+    """
+    plot each laser stimulation trial in a raster plot, plot laser triggered firing rate and
+    bar plot showing firing rate before, during, and after laser stimulation
+    :param ppath: folder with sleep recording
+    :param name: name of sleep recording
+    :param train: 
+    :param pre: time before laser onset [s]
+    :param post: time after laser onset [s]
+    :param nbin: downsample firing rate by a factor of $nbin
+    :param offs: int, the first shown laser trial
+    :param iters: int, show every $iters laser trial
+    :param istate: int, only plot laser trials, where the onset falls on brain state $istate
+                   istate=-1 - consider all states, 
+                   istate=1 - consider only REM trials
+                   istate=2 - consider only Wake trials 
+                   istate=3 - consider only NREM trials
+    :param laser_end: if > -1, then use only the first $laser_end seconds during laser interval
+                for fr_lsr
+    :return: 
+        fr_pre: firing rates before laser 
+        fr_lsr: firing rates during laser 
+        fr:     firing rates for complete time window including before, during, 
+                and after laser
+        t:      time vector
+         
+    """
+    import matplotlib.patches as patches
+
+    # load brain state
+    M = sleepy.load_stateidx(ppath, name)[0]
+
+    sr = sleepy.get_snr(ppath, name)
+    dt = 1.0 / sr
+    pre = int(np.round(pre/dt))
+    post = int(np.round(post/dt))
+    laser = sleepy.load_laser(ppath, name)
+    idxs, idxe = sleepy.laser_start_end(laser)
+    
+    # only collect laser trials starting during brain state istate
+    tmps = []
+    tmpe = []
+    if istate > -1:
+        nbin_state = int(np.round(sr) * 2.5)
+        for (i,j) in zip(idxs, idxe):
+            if M[int(i/nbin_state)] == istate:
+                tmps.append(i)
+                tmpe.append(j)                
+        idxs = np.array(tmps)
+        idxe = np.array(tmpe)
+
+    laser_dur = np.mean(idxe[offs::iters] - idxs[offs::iters] + 1)*dt
+    #print ('laser duration: ', laser_dur)
+    
+    len_train = train.shape[0]
+    raster = []
+    fr_pre = []
+    fr_lsr = []
+    fr_post = []
+    for (i,j) in zip(idxs[offs::iters], idxe[offs::iters]):
+        if (i - pre >= 0) and (i + post < len_train):
+
+
+            raster.append(train[i - pre:i + post + 1])
+            fr_pre.append(train[i-pre:i].mean())
+            if laser_end == -1:
+                fr_lsr.append(train[i:j+1].mean())
+            else:
+                k = int(laser_end/dt)
+                fr_lsr.append(train[i:i+k].mean())
+                
+            fr_post.append(train[j+1:j+post+1].mean())
+
+    fr_pre = np.array(fr_pre) * sr
+    fr_lsr = np.array(fr_lsr) * sr
+    fr_post = np.array(fr_post) * sr
+
+    # time x trials
+    raster = np.array(raster).T
+    # downsampling
+    raster = downsample_mx(raster, nbin).T * sr
+    dt = nbin*1.0/sr
+    t = np.arange(0, raster.shape[1]) * dt - pre*(1.0/sr)
+
+    fr = raster.mean(axis=0)
+    
+    
+    if sf > 0:
+        fr = sleepy.smooth_data(fr, sf)
+            
+    if pplot:
+        sleepy.set_fontarial()
+        plt.figure(figsize=(3,5))
+        ax = plt.axes([0.2, 0.4, 0.75, 0.25])
+        
+        ax.plot(t, fr, color='black')
+        max_fr = np.max(raster.mean(axis=0))
+        max_fr = np.max(fr)
+        ylim_fr = max_fr + 0.05*max_fr
+        plt.ylim([0, ylim_fr])
+        ax.add_patch(
+        patches.Rectangle((0, 0), laser_dur, ylim_fr, facecolor=[0.6, 0.6, 1], edgecolor=[0.6, 0.6, 1]))
+        plt.xlim((t[0], t[-1]))
+        plt.xlabel('Time (s)')
+        plt.ylabel('FR (spikes/s)')
+        sleepy.box_off(ax)
+
+        ax = plt.axes([0.2, 0.7, 0.75, 0.2])
+        R = raster.copy()
+        R[np.where(raster>0)] = 1
+
+        for i in range(R.shape[0]):
+            r = R[i,:]
+            idx = np.where(r == 1)[0]
+            plt.plot(t[idx], np.ones((len(idx),))*i, '.', ms=1, color='k')
+        ax.set_xlim((t[0], t[-1]))
+
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["bottom"].set_visible(False)
+        ax.axes.get_xaxis().set_visible(False)
+        ax.set_ylabel('Trial no.')
+        ax.add_patch(
+        patches.Rectangle((0, 0), laser_dur, R.shape[0], facecolor=[0.6, 0.6, 1], edgecolor=[0.6, 0.6, 1]))
+
+
+    #pdb.set_trace()
+    return fr_pre, fr_lsr, fr, t
     
 
 
