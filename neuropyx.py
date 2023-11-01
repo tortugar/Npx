@@ -3154,8 +3154,8 @@ def plot_trajectories(PC, M, pre, post, istate=1, dt=2.5, ma_thr=10, ma_rem_exce
 
 
 def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, ax='', 
-                   pscatter=True, local_coord=False, outline_std=True, rem_onset=False, pre_win=30,
-                   rem_min_dur=0, break_out=True, scale=1.645):
+                   pscatter=True, local_coord=False, outline_std=True, rem_onset=False, 
+                   pre_win=30, rem_min_dur=0, break_out=True, scale=1.645):
     """
     Plot for each time point the population activity within the 2D state space spanned
     by PC[0,:] and PC[1,:]
@@ -3193,8 +3193,8 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
     scale: float
         Scale = 1 means that the drawn ellipse outlines one standard deviation
         for each subspace. Scale = 1.645 outlines the area (of the fitted Gaussian)
-        lying within the 95% percentile.
-        90% == scale = 1.28
+        that comprises 95% of the data distribution.
+        scale = 1.28 comprises 90% of the distribution.
         
 
     Returns
@@ -3274,8 +3274,7 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
         else:        
             sns.kdeplot(x=C[:, 0], y=C[:, 1], ax=ax, color=clrs[s], fill=True, alpha=0.8, levels=[0.25, 0.5, 0.75, 1])
 
-        if local_coord:
-            
+        if local_coord and s==3:            
             pca = PCA(n_components=2)
             pca.fit(C)            
             mean_x, mean_y = np.mean(C, axis=0)
@@ -3312,15 +3311,15 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
     sns.despine()
 
     # just the onset of REM as single dot:
+    rem_start = [s[0] for s in sleepy.get_sequences(np.where(M==1)[0]) if len(s)*dt >= rem_min_dur and s[0]*dt >= pre_win]    
+
     if rem_onset:
-        rem_start = [s[0] for s in sleepy.get_sequences(np.where(M==1)[0]) if len(s)*dt >= rem_min_dur and s[0]*dt >= pre_win]    
         for r in rem_start[:]:
             plt.plot(PC[0,r], PC[1,r], 'c*')
     
-        rem_start = [s[0] for s in sleepy.get_sequences(np.where(M==1)[0]) if len(s)*dt >= rem_min_dur and s[0]*dt >= pre_win]    
+        #rem_start = [s[0] for s in sleepy.get_sequences(np.where(M==1)[0]) if len(s)*dt >= rem_min_dur and s[0]*dt >= pre_win]    
         ipre_win = int(pre_win/dt)
         for r in rem_start:
-            #plt.plot(PC[0,r-ipre_win:r+1], PC[1,r-ipre_win:r+1], 'b')            
             pc1, pc2 = PC[0,r-ipre_win:r+1], PC[1,r-ipre_win:r+1]
             sm = _jet_plot(pc1, pc2, ax, lw=2)
             
@@ -3331,8 +3330,7 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
         
     if break_out:
         seq = sleepy.get_sequences(np.where(M==1)[0])
-        rem_start = [s[0] for s in seq if len(s)*dt >= rem_min_dur]
-        
+        #rem_start = [s[0] for s in seq if len(s)*dt >= rem_min_dur]
         idx = state_idx[3]
         C = PC[0:2,idx].T
         
