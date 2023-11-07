@@ -1514,10 +1514,10 @@ def align_pcsign(PC, mouse, rem_pca=0, kcuts=[], config_file='', pnorm_spec=True
 
     Parameters
     ----------
-    PC : TYPE
-        DESCRIPTION.
-    mouse : TYPE
-        DESCRIPTION.
+    PC : np.array
+        Matrix with PCs; each row corresponds to one PC.
+    mouse : str
+        mouse name.
     rem_pca : int, optional
         0 or 1. If 0, assume that PC1 (PC[0,:]) is the "REM-PC".
     kcuts : TYPE, optional
@@ -1609,17 +1609,69 @@ def align_pcsign(PC, mouse, rem_pca=0, kcuts=[], config_file='', pnorm_spec=True
     
     
     
-def plot_pcs_withsigma(PC, M, mouse, ndim=2, pc_sign=[], kcuts=[], ma_thr=10, ma_rem_exception=False,
+def plot_pcs_withsigma(PC, M, mouse, ndim=2, pc_sign=[], kcuts=[], 
+                       ma_thr=10, ma_rem_exception=False,
                        tstart=0, tend=-1,
                        dt=2.5, sigma=[10,15], fmax=20, vm=[],
                        box_filt=[], pnorm_spec=True, 
                        reverse_pcs=False, tlegend=120, zoomin=[], pplot=True, config_file=''):
-    """    
+    """
     Plot principal components along with sigma power.
-    
+
+    Parameters
+    ----------
+    PC : TYPE
+        DESCRIPTION.
+    M : TYPE
+        DESCRIPTION.
+    mouse : TYPE
+        DESCRIPTION.
+    ndim : TYPE, optional
+        DESCRIPTION. The default is 2.
+    pc_sign : TYPE, optional
+        DESCRIPTION. The default is [].
+    kcuts : TYPE, optional
+        DESCRIPTION. The default is [].
+    ma_thr : TYPE, optional
+        DESCRIPTION. The default is 10.
+    ma_rem_exception : TYPE, optional
+        DESCRIPTION. The default is False.
+    tstart : TYPE, optional
+        DESCRIPTION. The default is 0.
+    tend : TYPE, optional
+        DESCRIPTION. The default is -1.
+    dt : TYPE, optional
+        DESCRIPTION. The default is 2.5.
+    sigma : TYPE, optional
+        DESCRIPTION. The default is [10,15].
+    fmax : TYPE, optional
+        DESCRIPTION. The default is 20.
+    vm : list, optional
+        List with two elements defining vmin and vmax for the EEG spectrogram colormap. 
+        If [], matplotlib will automatically set the color range.
+    box_filt : list, optional
+        Dimensions of box filter to smooth EEG spectrogram. If [], no filteringThe default is [].
+    pnorm_spec : bool, optional
+        If True, normalize spectrogram. 
+    reverse_pcs : TYPE, optional
+        DESCRIPTION. The default is False.
+    tlegend : TYPE, optional
+        DESCRIPTION. The default is 120.
+    zoomin : TYPE, optional
+        DESCRIPTION. The default is [].
+    pplot : TYPE, optional
+        DESCRIPTION. The default is True.
+    config_file : TYPE, optional
+        DESCRIPTION. The default is ''.
+
     Returns
     -------
-    None.
+    PC_orig : TYPE
+        DESCRIPTION.
+    M : TYPE
+        DESCRIPTION.
+    sigma_pow : TYPE
+        DESCRIPTION.
 
     """
 
@@ -1681,9 +1733,6 @@ def plot_pcs_withsigma(PC, M, mouse, ndim=2, pc_sign=[], kcuts=[], ma_thr=10, ma
     else:
         iend = int(tend/dt)
         
-    ### correlate PC2 with power band
-    # state_correlation(PC[1,:], sigma_pow, M, win=100, pplot=True)
-
     # cut out time interval istart - iend:
     M = M[istart:iend]
     PC = PC[:,istart:iend]
@@ -1771,6 +1820,7 @@ def plot_pcs_withsigma(PC, M, mouse, ndim=2, pc_sign=[], kcuts=[], ma_thr=10, ma
 
         # axes for PCs
         axes_pcs = plt.axes([0.1,0.05,0.8,0.5], sharex=axes_brs)
+        # colors for PCs
         cmap = sns.color_palette("husl", ndim)
         for i in range(ndim):
             axes_pcs.plot(t, PC[i,:], c=cmap[i])    
@@ -1782,14 +1832,11 @@ def plot_pcs_withsigma(PC, M, mouse, ndim=2, pc_sign=[], kcuts=[], ma_thr=10, ma
         axes_pcs.axes.get_yaxis().set_visible(False)
         sleepy._despine_axes(axes_pcs)
 
-
         if len(zoomin) > 0:
             zoomin = [int(z/dt) for z in zoomin]
-
             for z in zoomin:
                 pos = np.array(pos)
                 plt.plot([t[z], t[z]], [mmax, -(ndim-1)*mmax], 'k--')
-
 
         # axes for time legend
         axes_legend = plt.axes([0.1,0.04,0.8,0.04], sharex=axes_brs)
@@ -2670,8 +2717,13 @@ def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], min_laser=20, pzscore
     -------
     df : pandas.DataFrame
         with columns ['mouse', 'time', 'val', 'valz', 
-                      'pc', 'lsr_start', 'start_state',
+                      'pc', 'lsr_start', 'start_state', 'start_state_int',
                       'state', 'success', 'refractory']
+        
+        
+        'state': brain state sequence 
+        'start_state_int': How long does it take till the brain state at laser onset
+                           switches to a different state
 
     """
     dt = 2.5
@@ -2780,6 +2832,13 @@ def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], min_laser=20, pzscore
                     
                 start_state = M[i]
                 
+                # duration of interval of brainstate start_state till the
+                # brain_state switches:
+                start_state_int = len(m_lsr)*dt                
+                a = np.where(m_lsr != start_state)[0]
+                if len(a) > 0:
+                    start_state_int = len(a) * dt
+                
                 l = i-1
                 while M[l] != 1 and l>0:
                     l = l-1
@@ -2799,11 +2858,12 @@ def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], min_laser=20, pzscore
                     if inrem <= dur_rem_pre * 2:
                         refr = 'yes'
                                 
-                data += zip([mouse]*nt*ndim, tvec, vec, vecz, label, [i]*nt*ndim, [start_state]*nt*ndim,
+                data += zip([mouse]*nt*ndim, tvec, vec, vecz, 
+                            label, [i]*nt*ndim, [start_state]*nt*ndim, [start_state_int]*nt*ndim,
                             m_cut, [lsr_rem]*nt*ndim, [refr]*nt*ndim)
                                                         
         df = pd.DataFrame(data=data, columns=['mouse', 'time', 'val', 'valz', 
-                                              'pc', 'lsr_start', 'start_state',
+                                              'pc', 'lsr_start', 'start_state', 'start_state_int',
                                               'state', 'success', 'refractory'])
         
     if pplot:
@@ -2894,8 +2954,7 @@ def laser_triggered_frs(units, pre, post, mouse, kcuts=[], ma_thr=10, ma_rem_exc
     df : TYPE
         DESCRIPTION.
 
-    """
-    
+    """    
     dt = 2.5
     
     ddir = load_config(config_file)[mouse]['SL_PATH']
@@ -2932,7 +2991,6 @@ def laser_triggered_frs(units, pre, post, mouse, kcuts=[], ma_thr=10, ma_rem_exc
                 else:
                     M[s] = 3
     ###########################################################################
-
 
     if os.path.isfile(os.path.join(ddir, 'laser_%s.mat' % name)):
         sr = sleepy.get_snr(ppath, name)
@@ -3011,12 +3069,19 @@ def laser_triggered_frs(units, pre, post, mouse, kcuts=[], ma_thr=10, ma_rem_exc
                     
                 start_state = M[i]
 
+                # duration of interval of brainstate start_state till the
+                # brain state switches:
+                start_state_int = len(m_lsr)*dt                
+                a = np.where(m_lsr != start_state)[0]
+                if len(a) > 0:
+                    start_state_int = len(a) * dt
+
                 data += zip([mouse]*nt*nvar, tvec, vec, 
-                            label, ms_id, [i]*nt*nvar, [start_state]*nt*nvar,
+                            label, ms_id, [i]*nt*nvar, [start_state]*nt*nvar, [start_state_int]*nt*nvar, 
                             m_cut, [lsr_rem]*nt*nvar)
         
-        df = pd.DataFrame(data=data, columns=['mouse', 'time', 'fr',  
-                                              'ID', 'ms_id', 'lsr_start', 'start_state',
+        df = pd.DataFrame(data=data, columns=['mouse', 'time', 'fr', 'ID', 
+                                              'ms_id', 'lsr_start', 'start_state', 'start_state_int', 
                                               'state', 'success'])    
     return df
     
@@ -3244,7 +3309,6 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
         state_idx[s] = idx
         #ax.scatter(PC[0,idx], PC[1,idx], color=clrs[s], s=0.8, alpha=0.8)
 
-
     # get all indices for REM, Wake, and NREM    
     for s in [1,2,3]:
         idx = state_idx[s]
@@ -3327,7 +3391,8 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
         sm.set_clim(-50, 0)
         cbar.set_ticks([-50, 0])
         cbar.set_label("Time (s)")
-        
+    
+    df_breakout = []
     if break_out:
         seq = sleepy.get_sequences(np.where(M==1)[0])
         #rem_start = [s[0] for s in seq if len(s)*dt >= rem_min_dur]
@@ -3341,12 +3406,12 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
         pca.fit(C)        
         # get the eigenvectors of the covariance matrix:
         pc1, pc2 = pca.components_        
-        if pc1[0] < 0:
-            pc1 = -pc1        
+        if pc1[1] < 0:
+            pc1 = -pc1
         w = np.zeros((2,2))
         w[:,0] = pc1
         w[:,1] = pc2
-                                
+                                        
         first = []
         for r in rem_start:
             ifirst = last_subspace_point(r, PC[0:2,:], meanc, covar, scale=scale)
@@ -3361,6 +3426,7 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
         # w = w[:,ii]
         
         first_angles = []
+        c1, c2 = [], []
         for ifirst in first:
             # take the first point outside the NREM subspace
             p = PC[0:2,ifirst]
@@ -3375,10 +3441,13 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
             # NOTE: 0 deg. corresponds to 3; 90 deg. corresponds to 12
             angle_degrees = math.degrees(theta)
             first_angles.append(angle_degrees)
-        print(np.array(first_angles).mean())
+            c1.append(a[0])
+            c2.append(a[1])            
+        print(np.array(first_angles).mean())        
         print(first_angles)
+        df_breakout = pd.DataFrame({'angle':first_angles, 'pc1':c1, 'pc2':c2})
                 
-    return ax
+    return ax, df_breakout
     
 
 
