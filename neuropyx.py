@@ -3596,7 +3596,6 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
     for s in [1,2,3]:
         idx = np.where(M==s)[0]
         state_idx[s] = idx
-        #ax.scatter(PC[0,idx], PC[1,idx], color=clrs[s], s=0.8, alpha=0.8)
 
     # get all indices for REM, Wake, and NREM    
     for s in [1,2,3]:
@@ -3637,8 +3636,6 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
             nr_idx = np.where(M==3)[0]
             idx = np.intersect1d(refr_idx, nr_idx)
             
-            #idx = refr_idx
-            
             
             C = PC[0:2,idx].T
 
@@ -3663,8 +3660,6 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
                 ax.add_artist(ell)
             else:
                 sns.kdeplot(x=C[:, 0], y=C[:,1], ax=ax, color=refr_color, fill=True, alpha=0.8, levels=[0.25, 0.5, 0.75, 1])
-
-    
 
         if local_coord:
             idx = state_idx[3]
@@ -3786,17 +3781,153 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
     return ax, df_breakout
     
 
-def state_space_geometry():
+
+def state_space_geometry(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, ax='', 
+                   outline_std=True, prefr=True, scale=1.645):
     """
-    Distance between different subspaces
+    (1) Distance between different subspaces
+    (2) Refractory and permissive state space
 
     Returns
     -------
     None.
 
     """
+    state_map = {1:'REM', 2:'Wake', 3:'NREM'}
     
+    # KCUTS
+    tidx = np.arange(0, len(M))
+    # get the indices (in brainstate time) that we're going to completely discard:
+    if len(kcuts) > 0:
+        kidx = []
+        for kcut in kcuts:
+            a = int(kcut[0]/dt)
+            b = int(kcut[-1]/dt)
+            if b > len(M):
+                b = len(M)
+            kidx += list(np.arange(a, b))
+        
+        tidx = np.setdiff1d(tidx, kidx)
+        M = M[tidx]
+        nhypno = len(tidx)
+    ###########################################################################    
 
+    nhypno = np.min((len(M), PC.shape[1]))
+    M = M[0:nhypno]
+
+    # flatten out MAs
+    if ma_thr>0:
+        seq = sleepy.get_sequences(np.where(M==2)[0])
+        for s in seq:
+            if np.round(len(s)*dt) <= ma_thr:
+                if ma_rem_exception:
+                    if (s[0]>1) and (M[s[0] - 1] != 1):
+                        M[s] = 3
+                else:
+                    M[s] = 3
+
+    if ax == '':
+        plt.figure()
+        ax = plt.axes([0.2, 0.15, 0.7, 0.7])
+    clrs = [[0, 0, 0], [0, 1, 1], [0.6, 0, 1], [0.8, 0.8, 0.8], [1, 0.2, 0.2]]
+
+    state_idx = {}
+    for s in [1,2,3]:
+        idx = np.where(M==s)[0]
+        state_idx[s] = idx
+
+    # get all indices for REM, Wake, and NREM   
+    data_geom = []
+    for s in [1,2,3]:
+        idx = state_idx[s]
+        C = PC[0:2,idx].T
+
+    
+    
+        if outline_std:
+            
+            mean = C.mean(axis=0)
+            covar = np.cov(C.T)
+        
+            v, w = linalg.eigh(covar)
+            # columns of w are the eigenvectors
+            # v are the eigenvalues in ascending order
+            
+            # 2 * scale * std (the 2 is to transform the radius to diameter)
+            v = 2.0 * scale * np.sqrt(v) 
+            u = w[0] / linalg.norm(w[0])
+            
+            # Plot an ellipse to show the Gaussian component
+            angle = np.arctan(u[1] / u[0])
+            angle = 180.0 * angle / np.pi  # convert to degrees
+            
+            ell = mpl.patches.Ellipse(mean, v[0], v[1], angle=180.0 + angle, color=clrs[s],  lw=2, fill=True)
+            #else:
+            #    ell = mpl.patches.Ellipse(mean, v[0], v[1], angle=180.0 + angle, color=clrs[s],  lw=2)
+                
+            ell.set_clip_box(ax.bbox)
+            ell.set_alpha(0.3)
+            
+            ax.add_artist(ell)
+            
+            area = np.pi * v[0] * v[1]
+            data_geom += [list(C.mean(axis=0)) + [area] + [state_map[s]]]
+        
+        else:        
+            sns.kdeplot(x=C[:, 0], y=C[:, 1], ax=ax, color=clrs[s], fill=True, alpha=0.8, levels=[0.25, 0.5, 0.75, 1])
+
+    # Add refractory period to state space
+    if prefr:
+        refr_color = 'maroon'
+        perm_color = 'dodgerblue'
+        rp_clrs = [perm_color, refr_color]
+        df_refr, refr_vec, _ = add_refr(M)
+    
+        refr_idx = np.where(refr_vec == 1)[0]
+        perm_idx = np.where(refr_vec == 2)[0]
+        nr_idx = np.where(M==3)[0]
+        nr_idx_refr = np.intersect1d(refr_idx, nr_idx)
+        nr_idx_perm = np.intersect1d(perm_idx, nr_idx)
+        
+        Crefr = PC[0:2,nr_idx_refr].T
+        Cperm = PC[0:2,nr_idx_perm].T
+        
+                
+        if outline_std:
+            for C,clr,label in zip([Cperm, Crefr], rp_clrs, ['perm', 'refr']):
+                mean = C.mean(axis=0)
+                covar = np.cov(C.T)
+            
+                v, w = linalg.eigh(covar)
+                # columns of w are the eigenvectors
+                # v are the eigenvalues in ascending order
+                
+                # 2 * scale * std (the 2 is to transform the radius to diameter)
+                v = 2.0 * scale * np.sqrt(v) 
+                u = w[0] / linalg.norm(w[0])
+                
+                # Plot an ellipse to show the Gaussian component
+                angle = np.arctan(u[1] / u[0])
+                angle = 180.0 * angle / np.pi  # convert to degrees
+                ell = mpl.patches.Ellipse(mean, v[0], v[1], angle=180.0 + angle, color=clr,  lw=2)
+                ell.set_clip_box(ax.bbox)
+                ell.set_alpha(0.3)
+                ax.add_artist(ell)
+                
+                area = np.pi * v[0] * v[1]
+                data_geom += [list(C.mean(axis=0)) + [area] + [label]]
+                
+        else:
+            for C,clr in zip([Cperm, Crefr], rp_clrs):
+                sns.kdeplot(x=C[:, 0], y=C[:,1], ax=ax, color=clr, fill=True, alpha=0.8, levels=[0.25, 0.5, 0.75, 1])
+
+
+        if outline_std:
+            df_geom = pd.DataFrame(data=data_geom, columns=['pc1', 'pc2', 'area', 'state'])
+        else:
+            df_geom = []
+                
+    return df_geom
 
 
 
@@ -4531,8 +4662,11 @@ def add_refr(M, ma_thr=10, ma_rem_exception=False, kcuts=[]):
         DESCRIPTION.
     refr_vec : TYPE
         DESCRIPTION.
+    M : np.array
+         hypnogram without KCUTS
 
     """
+    M = M.copy()
     
     refr_func = refr_period()
 
@@ -4553,7 +4687,6 @@ def add_refr(M, ma_thr=10, ma_rem_exception=False, kcuts=[]):
 
     nhypno = len(M)
     tidx = np.arange(0, nhypno)
-
 
     # KCUT
     # get the indices (in brainstate time) that we're going to completely discard:
@@ -4587,9 +4720,7 @@ def add_refr(M, ma_thr=10, ma_rem_exception=False, kcuts=[]):
             #nrem_idx = np.where(M == 3)[0]
             #inrem_idx = np.intersect1d(irem_idx, nrem_idx)
 
-
-            mcut = M[irem_idx]
-            
+            mcut = M[irem_idx]            
             mcut2 = np.zeros(mcut.shape)
             mcut2[mcut==3] = dt
             mcut_csum = np.cumsum(mcut2)
@@ -4601,13 +4732,13 @@ def add_refr(M, ma_thr=10, ma_rem_exception=False, kcuts=[]):
             isplit = ((np.where(mcut_csum >= refr_dur)[0][0])-1) * 1
             refr_perc = dt * isplit / idur
 
-
             a = si[-1]+1
             refr_vec[a:a+isplit+1] = 1
+            refr_vec[a+isplit+1:sj[0]] = 2
 
-            data += [[rem_id, rem_pre, isplit, idur, refr_perc]]
+            data += [[rem_id, rem_pre, isplit, idur, refr_perc, sj[0]]]
 
-    df = pd.DataFrame(data=data, columns=['rem_id', 'rem_pre', 'isplit', 'irem_dur', 'ref_perc'])
+    df = pd.DataFrame(data=data, columns=['rem_id', 'rem_pre', 'isplit', 'irem_dur', 'ref_perc', 'irem_post'])
     return df, refr_vec, M
 
 
@@ -7778,15 +7909,14 @@ def xcorr_frs(unit1, unit2, window, ndown, sr=1000, pplot=False):
 
 
 
-def cc_jitter(unit1, unit2, window, sr, plot=True, plt_win=0.5):
+def cc_jitter(unit1, unit2, window, sr, plot=True, plt_win=0.5, version=1):
     """
     Interpretation
 
     Say b follows a, e.g.,
     a = [1,0,1,0]
     b = [0,1,0,1]
-    
-    
+        
     cross-correlation:
     [1, 0, 2, 0, 1, 0, 0]
               |
@@ -7798,10 +7928,10 @@ def cc_jitter(unit1, unit2, window, sr, plot=True, plt_win=0.5):
 
     Parameters
     ----------
-    unit1 : TYPE
-        DESCRIPTION.
-    unit2 : TYPE
-        DESCRIPTION.
+    unit1 : np.array
+        spike train of unit 1.
+    unit2 : np.array
+        spike train of unit 2.
     window : TYPE
         DESCRIPTION.
     sr : TYPE
@@ -7810,6 +7940,9 @@ def cc_jitter(unit1, unit2, window, sr, plot=True, plt_win=0.5):
         DESCRIPTION. The default is True.
     plt_win : TYPE, optional
         DESCRIPTION. The default is 0.5.
+    version : int
+        1 - no normalization for length of spike train
+        2 - normalize for length of spike train
 
     Returns
     -------
@@ -7818,9 +7951,7 @@ def cc_jitter(unit1, unit2, window, sr, plot=True, plt_win=0.5):
     np.array
         Cross-correlogram.
 
-    """
-
-    
+    """    
     # number of data points per window:
     iwin = window * sr
     nsplit = int(np.floor(len(unit1) / iwin))
@@ -7837,14 +7968,32 @@ def cc_jitter(unit1, unit2, window, sr, plot=True, plt_win=0.5):
     #fin2=np.concatenate(new_un2)
     #fin2 = unit2.copy()
     fin2 = unit2
-     
-    #fin2 = np.array(unit2)
-    norm = np.sqrt(fin1.mean() * fin2.mean()) * 1000
-    CC = scipy.signal.correlate(fin1, fin2)/norm
+
+    # 01/02/24 - NOTE: added 'n' to normalization!     
+    # not if unit1 has len n, then the correlation output has len 2*n-1
+    #n = len(unit1) / 1000
     
-    norm1 = np.sqrt(unit1.mean() * unit2.mean()) * 1000
-    CC1 = scipy.signal.correlate(unit1, unit2)/norm1
-    corrCC = CC1-CC
+    if version == 1:
+        n = 1
+         
+        norm = n * np.sqrt(fin1.mean() * fin2.mean()) * sr
+        CC = scipy.signal.correlate(fin1, fin2) / norm
+        
+        norm = n * np.sqrt(unit1.mean() * unit2.mean()) * sr
+        CCorig = scipy.signal.correlate(unit1, unit2) / norm
+    
+        corrCC = CCorig-CC
+    else:
+        n = len(unit1)
+         
+        norm = n * np.sqrt(fin1.mean() * fin2.mean()) * sr
+        CC = scipy.signal.correlate(fin1, fin2) / norm
+        
+        norm = n * np.sqrt(unit1.mean() * unit2.mean()) * sr
+        CCorig = scipy.signal.correlate(unit1, unit2) / norm
+    
+        corrCC = CCorig-CC
+        
     
     # not if unit1 has len n, then the correlation output has len 2*n-1
     n = len(unit1)
@@ -7864,19 +8013,7 @@ def cc_jitter(unit1, unit2, window, sr, plot=True, plt_win=0.5):
         plt.plot([0,0], ylim, 'k--')
 
         sns.despine()
-        
-    
-    # if plot==True:
-    #     n = len(unit1)
-    #     delay_arr = np.linspace(-0.5*n/sr, 0.5*n/sr, n)
-    #     delay = delay_arr[np.argmax(corrCC)]
-    #     plt.figure()
-    #     plt.plot(delay_arr, corrCC)
-    #     plt.title(f'unit {unit1.name} is {delay} behind unit {unit2.name}'+ '\n'+ 'Lag: '  + str(np.round(delay, 3)) + ' s')
-    #     plt.xlabel('Lag')
-    #     plt.ylabel('Correlation coeff')
-    #     plt.show()
-    
+            
     return corrCC[idx], t[idx]
    
             
@@ -8002,7 +8139,70 @@ def cc_jitter2(unit1, unit2, window, sr, plot=True, plt_win=0.5):
     
     #return corrCC[idx], t[idx] 
            
+
+
+
+def cc_jitter_irem(unit1, unit2, window, sr, M, perc=3, plot=True, plt_win=0.5, version=2):
+    """
+    Jitter-corrected cross-correlation for different intervals of the inter-REM interval
+
+    Parameters
+    ----------
+    unit1 : TYPE
+        DESCRIPTION.
+    unit2 : TYPE
+        DESCRIPTION.
+    window : TYPE
+        DESCRIPTION.
+    sr : TYPE
+        DESCRIPTION.
+    M : TYPE
+        DESCRIPTION.
+    perc : int, optional
+        Number of intervals (percentiles) that the inter-REM interval is divided into.
+    plot : TYPE, optional
+        DESCRIPTION. The default is True.
+    plt_win : TYPE, optional
+        DESCRIPTION. The default is 0.5.
+
+    Returns
+    -------
+    corr_dict : TYPE
+        DESCRIPTION.
+    t : TYPE
+        DESCRIPTION.
+
+    """
+
+    sdt = 2.5
+    seq = sleepy.get_sequences(np.where(M==1)[0])
+    tvec = np.arange(0, len(unit1)) * 1/sr
+    
+    corr_dict = {p:0 for p in range(1, perc+1)}
+
+    for p in range(1, perc+1):
+        perc_idx = np.array([], dtype='int')
+
+        for si,sj in zip(seq[0:-1], seq[1:]):
+            irem_idx = np.arange(si[-1]+1, sj[0], dtype='int')
+            irem_start = (si[-1]+1) * sdt
+                
+            irem_dur = len(irem_idx) * sdt            
+            perc_dur = irem_dur / perc
             
+            perc_start = irem_start + (p-1) * perc_dur
+            perc_end   = irem_start + p * perc_dur
+
+            idx = np.where((tvec >= perc_start) & (tvec < perc_end))[0]            
+            perc_idx = np.concatenate((perc_idx, idx))            
+                        
+        cc, t = cc_jitter(unit1[perc_idx], unit2[perc_idx], window, sr, plot=False, plt_win=0.1, version=version)
+        corr_dict[p] = cc
+                
+    return corr_dict, t
+
+
+
 def pca(data, dims=2):
     """
     @data is a 2D matrix.
