@@ -3790,7 +3790,11 @@ def state_space_geometry(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=
 
     Returns
     -------
-    None.
+    df_geom: pd.DataFrame
+        with columns ['pc1', 'pc2', 'area', 'state'] that
+        describe for each $state the coordindates of the mean of its subspace 
+        spanned by 'pc1' and 'pc2' and the 'area' of this subspace.
+    
 
     """
     state_map = {1:'REM', 2:'Wake', 3:'NREM'}
@@ -5205,6 +5209,7 @@ def is_cycle_outcome(PC, mouse, kcuts=[], pc_sign=[], config_file='',
                      ma_thr=10, ma_rem_exception=True, sigma=[10,15], dt=2.5, 
                      wfreq=[0.01, 0.03], box_filt=[], pnorm_spec=True, 
                      nrem_thr=120, win=20, nstates=20, pplot=False):
+    
     from scipy.signal import hilbert
     
     if len(pc_sign) > 0:
@@ -8199,6 +8204,76 @@ def cc_jitter_irem(unit1, unit2, window, sr, M, perc=3, plot=True, plt_win=0.5, 
         cc, t = cc_jitter(unit1[perc_idx], unit2[perc_idx], window, sr, plot=False, plt_win=0.1, version=version)
         corr_dict[p] = cc
                 
+    return corr_dict, t
+
+
+
+def cc_jitter_refr(unit1, unit2, window, sr, M, nrem_only=True, ma_thr=10, plot=True, plt_win=0.5, version=2):
+    """
+    Jitter-corrected cross-correlation for different intervals of the inter-REM interval
+
+    Parameters
+    ----------
+    unit1 : TYPE
+        DESCRIPTION.
+    unit2 : TYPE
+        DESCRIPTION.
+    window : TYPE
+        DESCRIPTION.
+    sr : TYPE
+        DESCRIPTION.
+    M : TYPE
+        DESCRIPTION.
+    perc : int, optional
+        Number of intervals (percentiles) that the inter-REM interval is divided into.
+    plot : TYPE, optional
+        DESCRIPTION. The default is True.
+    plt_win : TYPE, optional
+        DESCRIPTION. The default is 0.5.
+
+    Returns
+    -------
+    corr_dict : TYPE
+        DESCRIPTION.
+    t : TYPE
+        DESCRIPTION.
+
+    """
+    NBIN = 2500
+    corr_dict = {'refr':[], 'perm':[]}
+
+    refr = add_refr(M, ma_thr)[1]
+
+    refr_idx = np.where(refr==1)[0]
+    perm_idx = np.where(refr==2)[0]
+    nrem_idx = np.where(M==3)[0]
+
+    if nrem_only:
+        refr_idx = np.intersect1d(refr_idx, nrem_idx)
+        perm_idx = np.intersect1d(perm_idx, nrem_idx)
+        
+
+    seq = sleepy.get_sequences(refr_idx)
+    idx = []
+    for s in seq:
+        idx += list(range(s[0]*NBIN, s[-1]*NBIN))
+        
+
+    refr_idx = idx
+        
+    seq = sleepy.get_sequences(perm_idx)
+    idx = []
+    for s in seq:
+        idx += list(range(s[0]*NBIN, s[-1]*NBIN))
+    perm_idx = idx
+
+
+    cc, t = cc_jitter(unit1[refr_idx], unit2[refr_idx], window, sr, plot=False, plt_win=0.1, version=version)
+    corr_dict['refr'] = cc
+
+    cc, t = cc_jitter(unit1[perm_idx], unit2[perm_idx], window, sr, plot=False, plt_win=0.1, version=version)
+    corr_dict['perm'] = cc
+
     return corr_dict, t
 
 
