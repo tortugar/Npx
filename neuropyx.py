@@ -72,10 +72,15 @@ def brstate_class(np_path, sleep_path, sleep_rec, mouse, tend=-1, tstart=0, pzsc
     :param single_mice: boolean, if True use separate colors for single mice in 
                         summary plots
                         
-    :return df: pd.DataFrame 
+    :return df_class: pd.DataFrame 
           with columns 
           ['ID', 'R', 'W', 'N', 'F-anova', 'P-anova', 'P-tukey', 'Type', 
            'Depth', 'Quality', 'mouse', 'brain_region']
+          
+    :rem df_pearson: pd.DataFrame
+          with columns
+          ['unit', 'r', 'p', 'sig', 'state','depth','Type','Quality']
+          
                         
     """
     units, cell_info, M, kcut = load_mouse(mouse, config_file)
@@ -326,7 +331,6 @@ def brstate_class(np_path, sleep_path, sleep_rec, mouse, tend=-1, tstart=0, pzsc
             mouse_shown = {m:0 for m in mice}
             plt.subplot(int('1%d%d' % (len(types), j)))
             df = df_class[df_class['Type']==typ][['R', 'N', 'W']]
-            #df = pd.melt(df, var_name='state', value_name='dff')  
             
             sns.barplot(data=df[['R', 'N', 'W']], color='gray')
             for index, row in df.iterrows():
@@ -754,6 +758,50 @@ def sort_xcorr_byregion(type1, type2, corr_frame, unit_info):
 def fr_transitions(units, M, unit_info, transitions, pre, post, si_threshold, sj_threshold, 
                    ma_thr=10, ma_rem_exception=False, sdt=2.5, pzscore=True, sf=0, ma_mode=False, 
                    attributes=[], kcuts=[]):
+    """
+    
+
+    Parameters
+    ----------
+    units : TYPE
+        DESCRIPTION.
+    M : TYPE
+        DESCRIPTION.
+    unit_info : TYPE
+        DESCRIPTION.
+    transitions : TYPE
+        DESCRIPTION.
+    pre : TYPE
+        DESCRIPTION.
+    post : TYPE
+        DESCRIPTION.
+    si_threshold : TYPE
+        DESCRIPTION.
+    sj_threshold : TYPE
+        DESCRIPTION.
+    ma_thr : TYPE, optional
+        DESCRIPTION. The default is 10.
+    ma_rem_exception : TYPE, optional
+        DESCRIPTION. The default is False.
+    sdt : TYPE, optional
+        DESCRIPTION. The default is 2.5.
+    pzscore : TYPE, optional
+        DESCRIPTION. The default is True.
+    sf : TYPE, optional
+        DESCRIPTION. The default is 0.
+    ma_mode : TYPE, optional
+        DESCRIPTION. The default is False.
+    attributes : list of strings, optional
+        Allows you to transfer columns in DataFrame $unit_info to the returned DataFrame. The default is [].
+    kcuts : TYPE, optional
+        DESCRIPTION. The default is [].
+
+    Returns
+    -------
+    df : TYPE
+        DESCRIPTION.
+
+    """
 
     states = {1:'R', 2:'W', 3:'N', 4:'M'}
     
@@ -822,7 +870,6 @@ def fr_transitions(units, M, unit_info, transitions, pre, post, si_threshold, sj
                     # so the indices of state si are seq
                     # the indices of state sj are sj_idx
     
-
                     if ipre <= ti < len(M)-ipost and len(s)*sdt >= si_threshold[si-1] and len(sj_idx)*sdt >= sj_threshold[sj-1]:
                         act = fr[ti-ipre+1:ti+ipost+1]
                         # Note: ti+1 is the first time point of the "post" state
@@ -848,6 +895,62 @@ def fr_transitions(units, M, unit_info, transitions, pre, post, si_threshold, sj
 
     return df
 
+
+
+def fr_transitions_stats(df_trans, base_int, trans, unit_avg=True, dt=2.5):
+    
+    # test if df has column ms_id
+
+    if not 'ms_id' in df_trans.columns:
+        mice = list(df_trans['mouse'])
+        ids = list(df_trans['ID'])
+        
+        ms_ids = [m + '-' + i for m,i in zip(mice, ids)]
+        df_trans['ms_id'] = ms_ids
+
+
+    ids = list(df_trans.ms_id.unique())
+
+    df_trans = df_trans[df_trans.trans == trans]
+    dfm_trans = df_trans.groupby(['ID', 'time', 'trans']).mean().reset_index()
+
+    t = np.array(dfm_trans.loc[df_trans.ms_id == ids[0], 'time'])
+    
+
+    ibin = int(base_int / dt)
+    pre = t[0]
+    post = t[-1]
+    nbin = int(np.floor((pre+post)/base_int))
+    
+        
+    trans_mx = np.zeros((len(ids), len(nbin)))
+    
+
+
+    # Statistics: When does activity becomes significantly different from baseline?
+    ibin = int(np.round(base_int / dt))
+    nbin = int(np.floor((pre+post)/base_int))
+    data = []
+    for tr in trans_act:
+        if mouse_stats:
+            trans = trans_act[tr]
+        else:
+            trans = trans_act_trials[tr]
+        base = trans[:,0:ibin].mean(axis=1)
+        for i in range(1,nbin):
+            p = stats.ttest_rel(base, trans[:,i*ibin:(i+1)*ibin].mean(axis=1))
+            sig = 'no'
+            if p.pvalue < (0.05 / (nbin-1)):
+                sig = 'yes'
+            tpoint = i*(ibin*dt)+tinit + ibin*dt/2
+            tpoint = float('%.2f'%tpoint)
+            
+            data.append([tpoint, p.pvalue, sig, tr])
+    df_stats = pd.DataFrame(data = data, columns = ['time', 'p-value', 'sig', 'trans'])
+    print(df_stats)
+
+
+    return
 
 
 def pc_transitions(PC, M, transitions, pre, post, si_threshold, sj_threshold, 
@@ -3755,11 +3858,13 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
         first_angles = []
         c1, c2 = [], []
         porg1, porg2 = [], []
+        porg1_rel, porg2_rel = [], []
         for ifirst in first:
             # take the first point outside the NREM subspace
             p = PC[0:2,ifirst]
             # center the point
             pctr = p - meanc
+                        
             # project it onto the eigenvectors
             a = np.dot(pctr, w)
             x, y = a[0], a[1]
@@ -3771,12 +3876,17 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
             first_angles.append(angle_degrees)
             c1.append(a[0])
             c2.append(a[1]) 
-            porg1.append(pctr[0])
-            porg2.append(pctr[1])
+            
+            porg1_rel.append(pctr[0])
+            porg2_rel.append(pctr[1])
+            porg1.append(p[0])
+            porg2.append(p[1])
             
         #print(np.array(first_angles).mean())        
         #print(first_angles)
-        df_breakout = pd.DataFrame({'angle':first_angles, 'pc1':c1, 'pc2':c2, 'pc1_org':porg1, 'pc2_org':porg2})
+        df_breakout = pd.DataFrame({'angle':first_angles, 'pc1':c1, 'pc2':c2, 
+                                    'pc1_org':porg1, 'pc2_org':porg2, 
+                                    'pc1_rel':porg1_rel, 'pc2_rel':porg2_rel})
                                 
     return ax, df_breakout
     
@@ -4095,7 +4205,9 @@ def irem_trends(units, M, nsmooth=0, pzscore=False, kcut=[], irem_dur=120, wake_
 
 
 def remrem_sections(units, cell_info, M, nsections=5, nsections_rem=0, nsmooth=0, pzscore=False, kcuts=[], 
-                    irem_dur=120, refractory_rule=False, wake_prop_threshold=0.5, ma_thr=10, ma_rem_exception=False, nan_check=False):
+                    irem_dur=120, refractory_rule=False, wake_prop_threshold=0.5, ma_thr=10, ma_rem_exception=False, 
+                    border=0,
+                    nan_check=False):
     """
     Calculate the everage NREM and Wake activity during consecutive sections of the
     inter-REM interval for each single unit and then perform regression analysis to test whether 
@@ -4201,7 +4313,7 @@ def remrem_sections(units, cell_info, M, nsections=5, nsections_rem=0, nsmooth=0
         # go over all inter-REM episodes
         if len(seq) >= 2:
             for (si, sj) in zip(seq[0:-1], seq[1:]):                
-                irem_idx = np.arange(si[-1]+1, sj[0], dtype='int')
+                irem_idx = np.arange(si[-1]+1, sj[0]-border, dtype='int')
                 rem_id = si[0]
                 
                 # the refractory duration:
@@ -6185,12 +6297,6 @@ def plot_firingrates(units, cell_info, ids, mouse,
         axes_lbs.set_xlim([0, 1])
         axes_lbs.set_ylim(0, nunits)
         sleepy._despine_axes(axes_lbs)
-
-        #axes_ylabel = plt.axes([0.05, 0.1, 0.01, yrange])
-        #axes_ylabel.set_xlim([0, 1])
-        #axes_ylabel.set_ylim(0, nunits)
-        #sleepy._despine_axes(axes_ylabel)
-        #axes_ylabel.set_ylabel('Firing rate')
         
         plt.gcf().text(0.03,0.1+yrange/2, 'Firing rates (spikes/s)', rotation=90, verticalalignment='center')
 
@@ -7015,7 +7121,7 @@ def fr_infraslow(units, cell_info, mouse, ids=[], pzscore=True, dt=2.5, nsmooth=
     data = []
 
     if pnorm==True:
-        SpecVec = SpecVec / SpecVec.mean()#/LA.norm(SpecMx[i,:])    
+        SpecVec = SpecVec / SpecVec.mean()
     data += zip([mouse]*len(f), f, SpecVec, ['spec']*len(f))    
     
     Units = {unit:[] for unit in ids}
