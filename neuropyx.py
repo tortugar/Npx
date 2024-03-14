@@ -3986,7 +3986,7 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
 
 
 def state_space_geometry(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, ax='', 
-                   outline_std=True, prefr=True, scale=1.645):
+                   outline_std=True, prefr=True, show_nrem=True, scale=1.645):
     """
     (1) Distance between different subspaces
     (2) Refractory and permissive state space; draw ellipses capturing the distribution
@@ -4047,7 +4047,7 @@ def state_space_geometry(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=
 
     # get all indices for REM, Wake, and NREM   
     data_geom = []
-    if prefr:
+    if not show_nrem:
         shown_states = [1,2]
     else:
         shown_states = [1,2,3]
