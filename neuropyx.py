@@ -3806,7 +3806,10 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
     sns.despine()
 
     # just the onset of REM as single dot:
-    rem_start = [s[0] for s in sleepy.get_sequences(np.where(M==1)[0]) if len(s)*dt >= rem_min_dur and s[0]*dt >= pre_win]    
+    rem_start = [s[0] for s in sleepy.get_sequences(np.where(M==2)[0]) if len(s)*dt >= rem_min_dur and s[0]*dt >= pre_win]    
+
+    rem_start = [s[0] for s in sleepy.get_sequences(np.where(M==2)[0]) if len(s)*dt >= rem_min_dur and s[0]*dt >= pre_win and M[s[0]-1]==3]    
+
 
     if rem_onset:
         for r in rem_start[:]:
@@ -4000,8 +4003,10 @@ def state_space_geometry(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=
         describe for each $state the coordindates of the mean of its subspace 
         spanned by 'pc1' and 'pc2' and the 'area' of this subspace.
     df_distr: pd.DataFrame
-
+        with columns ['pc1', 'pc2', 'state']
+        All PC1 and PC2 values within refractory and permissive state space
     """
+    
     state_map = {1:'REM', 2:'Wake', 3:'NREM'}
     
     # KCUTS
