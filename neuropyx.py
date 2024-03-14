@@ -897,7 +897,7 @@ def fr_transitions(units, M, unit_info, transitions, pre, post, si_threshold, sj
 
 
 
-def fr_transitions_stats(df_trans, base_int, trans, unit_avg=True, dt=2.5):
+def fr_transitions_stats(df_trans, base_int, unit_avg=True, dt=2.5):
     
     # test if df has column ms_id
 
@@ -911,31 +911,35 @@ def fr_transitions_stats(df_trans, base_int, trans, unit_avg=True, dt=2.5):
 
     ids = list(df_trans.ms_id.unique())
 
-    df_trans = df_trans[df_trans.trans == trans]
-    dfm_trans = df_trans.groupby(['ID', 'time', 'trans']).mean().reset_index()
+    #df_trans = df_trans[df_trans.trans == trans]
+    dfm_trans = df_trans[['ms_id', 'time', 'fr', 'trans']].groupby(['ms_id', 'time', 'trans',]).mean().reset_index()
 
-    t = np.array(dfm_trans.loc[df_trans.ms_id == ids[0], 'time'])
+    #t = np.array(dfm_trans.loc[df_trans.ms_id == ids[0], 'time'])
+    t = dfm_trans.time.unique()
     
-
+    # number of bins per time bin
     ibin = int(base_int / dt)
     pre = t[0]
     post = t[-1]
-    nbin = int(np.floor((pre+post)/base_int))
-    
-        
-    trans_mx = np.zeros((len(ids), len(nbin)))
-    
+    nbin = int(np.floor((abs(pre)+post)/base_int))            
+    #pdb.set_trace()
+    trans_dict = {}
+    for tr in df_trans.trans.unique():
+        print
+        trans_mx = np.zeros((len(ids), len(t)))
 
+        for i,ID in enumerate(ids):
+            fr = dfm_trans.loc[(dfm_trans.ms_id == ID) & (dfm_trans.trans==tr), 'fr']
+            trans_mx[i,:] = fr
+        trans_dict[tr] = trans_mx
 
+    tinit = t[0]
     # Statistics: When does activity becomes significantly different from baseline?
     ibin = int(np.round(base_int / dt))
-    nbin = int(np.floor((pre+post)/base_int))
+    nbin = int(np.floor((abs(pre)+post)/base_int))
     data = []
-    for tr in trans_act:
-        if mouse_stats:
-            trans = trans_act[tr]
-        else:
-            trans = trans_act_trials[tr]
+    for tr in trans_dict:
+        trans = trans_dict[tr]
         base = trans[:,0:ibin].mean(axis=1)
         for i in range(1,nbin):
             p = stats.ttest_rel(base, trans[:,i*ibin:(i+1)*ibin].mean(axis=1))
@@ -949,8 +953,7 @@ def fr_transitions_stats(df_trans, base_int, trans, unit_avg=True, dt=2.5):
     df_stats = pd.DataFrame(data = data, columns = ['time', 'p-value', 'sig', 'trans'])
     print(df_stats)
 
-
-    return
+    return df_stats
 
 
 def pc_transitions(PC, M, transitions, pre, post, si_threshold, sj_threshold, 
@@ -3606,8 +3609,8 @@ def plot_trajectories(PC, M, pre, post, istate=1, dt=2.5, ma_thr=10, ma_rem_exce
 
 
 def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, ax='', 
-                   pscatter=True, local_coord=False, outline_std=True, rem_onset=False, 
-                   pre_win=30, rem_min_dur=0, break_out=True, prefr=False, scale=1.645):
+                   pscatter=True, local_coord=False, outline_std=True, rem_onset=False, rem_offset=False,
+                   pre_win=30, post_win=30, rem_min_dur=0, break_out=True, break_in=False, prefr=False, scale=1.645):
     """
     Plot for each time point the population activity within the 2D state space spanned
     by PC[0,:] and PC[1,:]
@@ -3693,7 +3696,7 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
     if ax == '':
         plt.figure()
         ax = plt.axes([0.2, 0.15, 0.7, 0.7])
-    clrs = [[0, 0, 0], [0, 1, 1], [0.6, 0, 1], [0.8, 0.8, 0.8], [1, 0.2, 0.2]]
+    clrs = [[0, 0, 0], [0, 1, 1], [0.6, 0, 1], [0.6, 0.6, 0.6], [1, 0.2, 0.2]]
 
     state_idx = {}
     for s in [1,2,3]:
@@ -3705,8 +3708,7 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
         idx = state_idx[s]
         C = PC[0:2,idx].T
     
-        if outline_std:
-            
+        if outline_std:            
             mean = C.mean(axis=0)
             covar = np.cov(C.T)
         
@@ -3738,8 +3740,7 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
             refr_idx = np.where(refr_vec == 1)[0]
             nr_idx = np.where(M==3)[0]
             idx = np.intersect1d(refr_idx, nr_idx)
-            
-            
+                        
             C = PC[0:2,idx].T
 
             if outline_std:
@@ -3811,21 +3812,42 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
         for r in rem_start[:]:
             plt.plot(PC[0,r], PC[1,r], 'c*')
     
-        #rem_start = [s[0] for s in sleepy.get_sequences(np.where(M==1)[0]) if len(s)*dt >= rem_min_dur and s[0]*dt >= pre_win]    
         ipre_win = int(pre_win/dt)
         for r in rem_start:
             pc1, pc2 = PC[0,r-ipre_win:r+1], PC[1,r-ipre_win:r+1]
             sm = _jet_plot(pc1, pc2, ax, lw=2)
             
         cbar = plt.colorbar(sm, ax=ax, orientation='vertical', pad=0.05, shrink=0.6)  # pad adjusts the distance between the plot and colorbar
-        sm.set_clim(-50, 0)
-        cbar.set_ticks([-50, 0])
+        sm.set_clim(-pre_win, 0)
+        cbar.set_ticks([-pre_win, 0])
         cbar.set_label("Time (s)")
     
+    if rem_offset:
+        ipre_win = int(pre_win/dt)
+        ipost_win = int(post_win/dt)
+        rem_end = [s[-1]+1 for s in sleepy.get_sequences(np.where(M==1)[0]) if len(s)*dt >= rem_min_dur and s[-1]+ipost_win < len(M) and s[-1]>ipre_win]    
+        tmp = []
+        for r in rem_end:
+            i = r
+            while i < len(M) and M[i] != 3:
+                i += 1            
+            dur = (i - r) * dt            
+            if dur <= post_win:
+                tmp.append(r)                
+        rem_end = tmp
+                
+        for r in rem_end:
+            pc1, pc2 = PC[0,r-ipre_win:r+ipost_win], PC[1,r-ipre_win:r+ipost_win]
+            sm = _jet_plot(pc1, pc2, ax, lw=2, cmap='bwr')
+            
+        cbar = plt.colorbar(sm, ax=ax, orientation='vertical', pad=0.05, shrink=0.6)  # pad adjusts the distance between the plot and colorbar
+        sm.set_clim(-pre_win, post_win)
+        cbar.set_ticks([-pre_win, post_win])
+        cbar.set_label("Time (s)")
+            
     df_breakout = []
     if break_out:
         seq = sleepy.get_sequences(np.where(M==1)[0])
-        #rem_start = [s[0] for s in seq if len(s)*dt >= rem_min_dur]
         idx = state_idx[3]
         C = PC[0:2,idx].T
         
@@ -3887,8 +3909,79 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
         df_breakout = pd.DataFrame({'angle':first_angles, 'pc1':c1, 'pc2':c2, 
                                     'pc1_org':porg1, 'pc2_org':porg2, 
                                     'pc1_rel':porg1_rel, 'pc2_rel':porg2_rel})
-                                
-    return ax, df_breakout
+
+    df_breakin = []
+    if break_in:
+        
+        #rem_end = [s[-1]+1 for s in sleepy.get_sequences(np.where(M==1)[0]) if len(s)*dt >= rem_min_dur and s[-1]+ipost_win < len(M) and s[-1]>ipre_win]    
+        
+        # tmp = []
+        # for r in rem_end:
+        #     i = r
+        #     while i < len(M) and M[i] != 3:
+        #         i += 1            
+        #     dur = (i - r) * dt            
+        #     if dur <= post_win:
+        #         print(dur)
+        #         tmp.append(r)                
+        # rem_end = tmp
+
+        
+        seq = sleepy.get_sequences(np.where(M==1)[0])
+        idx = state_idx[3]
+        C = PC[0:2,idx].T
+        
+        meanc = C.mean(axis=0)
+        covar = np.cov(C.T)
+        
+        pca = PCA(n_components=2)
+        pca.fit(C)        
+        # get the eigenvectors of the covariance matrix:
+        pc1, pc2 = pca.components_        
+        if pc1[1] < 0:
+            pc1 = -pc1
+        w = np.zeros((2,2))
+        w[:,0] = pc1
+        w[:,1] = pc2
+                                        
+        first = []
+        for r in rem_end:
+            ifirst = first_subspace_point(r, PC[0:2,:], meanc, covar, scale=scale)
+            first.append(ifirst)
+            plt.plot(PC[0,ifirst], PC[1,ifirst], 'ro')
+                            
+        first_angles = []
+        c1, c2 = [], []
+        porg1, porg2 = [], []
+        porg1_rel, porg2_rel = [], []
+        for ifirst in first:
+            # take the first point outside the NREM subspace
+            p = PC[0:2,ifirst]
+            # center the point
+            pctr = p - meanc
+                        
+            # project it onto the eigenvectors
+            a = np.dot(pctr, w)
+            x, y = a[0], a[1]
+            # calculate the angle in radians
+            theta = math.atan2(x, y)                                    
+            # Convert the angle to degrees;
+            # NOTE: 0 deg. corresponds to 3; 90 deg. corresponds to 12
+            angle_degrees = math.degrees(theta)
+            first_angles.append(angle_degrees)
+            c1.append(a[0])
+            c2.append(a[1]) 
+            
+            porg1_rel.append(pctr[0])
+            porg2_rel.append(pctr[1])
+            porg1.append(p[0])
+            porg2.append(p[1])
+            
+        df_breakin = pd.DataFrame({'angle':first_angles, 'pc1':c1, 'pc2':c2, 
+                                    'pc1_org':porg1, 'pc2_org':porg2, 
+                                    'pc1_rel':porg1_rel, 'pc2_rel':porg2_rel})
+                                    
+    return ax, df_breakout, df_breakin
     
 
 
@@ -3896,7 +3989,9 @@ def state_space_geometry(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=
                    outline_std=True, prefr=True, scale=1.645):
     """
     (1) Distance between different subspaces
-    (2) Refractory and permissive state space
+    (2) Refractory and permissive state space; draw ellipses capturing the distribution
+        of the refractory and permissive period. Note that these periods only include 
+        NREM sleep
 
     Returns
     -------
@@ -3904,7 +3999,7 @@ def state_space_geometry(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=
         with columns ['pc1', 'pc2', 'area', 'state'] that
         describe for each $state the coordindates of the mean of its subspace 
         spanned by 'pc1' and 'pc2' and the 'area' of this subspace.
-    
+    df_distr: pd.DataFrame
 
     """
     state_map = {1:'REM', 2:'Wake', 3:'NREM'}
@@ -3952,12 +4047,14 @@ def state_space_geometry(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=
 
     # get all indices for REM, Wake, and NREM   
     data_geom = []
-    for s in [1,2,3]:
+    if prefr:
+        shown_states = [1,2]
+    else:
+        shown_states = [1,2,3]
+    for s in shown_states:
         idx = state_idx[s]
         C = PC[0:2,idx].T
 
-    
-    
         if outline_std:
             
             mean = C.mean(axis=0)
@@ -4006,6 +4103,11 @@ def state_space_geometry(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=
         Crefr = PC[0:2,nr_idx_refr].T
         Cperm = PC[0:2,nr_idx_perm].T
         
+        data_distr = []
+        data_distr += zip(Crefr[:,0], Crefr[:,1], ['refr']*Crefr.shape[0])
+        data_distr += zip(Cperm[:,0], Cperm[:,1], ['perm']*Cperm.shape[0])
+        df_distr = pd.DataFrame(data=data_distr, columns=['pc1', 'pc2', 'state'])
+        
                 
         if outline_std:
             for C,clr,label in zip([Cperm, Crefr], rp_clrs, ['perm', 'refr']):
@@ -4041,7 +4143,7 @@ def state_space_geometry(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=
         else:
             df_geom = []
                 
-    return df_geom
+    return df_geom, df_distr
 
 
 
@@ -4066,19 +4168,23 @@ def mahalanobis_distance(point, mean, covariance_matrix):
     return mahalanobis_distance
 
 
-def last_subspace_point(istate, PC, meanc, Ci, scale=np.sqrt(2)):
-    
-    i = istate
-    
+def last_subspace_point(istate, PC, meanc, Ci, scale=np.sqrt(2)):    
+    i = istate    
     while mahalanobis_distance(PC[:,i], meanc, Ci) > scale and i > 0:
         #print(mahalanobis_distance(PC[:,i], meanc, Ci))
         i = i-1
     
     ifirst = i+1
-    
-    
     return ifirst
     
+
+def first_subspace_point(istate, PC, meanc, Ci, scale=np.sqrt(2)):    
+    i = istate    
+    while mahalanobis_distance(PC[:,i], meanc, Ci) > scale and i < PC.shape[1]:
+        i = i+1    
+    #ifirst = i-1
+    return i
+
     
 
 def svc_components(units, ndim=3, nsmooth=0):
@@ -5912,6 +6018,8 @@ def state_correlation_avg(units, ids1, ids2, M, kcuts=[], istate=3, win=60, tbre
     State-dependent cross-correlation. 
     Autocorrelate each pair of units within two sets of units (@ids1 and @ids2). 
 
+    NOTE: Negative time points mean that @ids1 precede @ids2
+
     Parameters
     ----------
     units : pd.DataFrame
@@ -5993,14 +6101,6 @@ def state_correlation_avg(units, ids1, ids2, M, kcuts=[], istate=3, win=60, tbre
     #     unitIDs = [unit for unit in units.columns if '_' in unit]
     #     unitIDs = [unit for unit in unitIDs if re.split('_', unit)[1] == 'good']
     #     nhypno  = np.min((len(M), units.shape[0]))
-
-
-
-
-
-
-
-
 
 
     
@@ -8396,7 +8496,6 @@ def pca(data, dims=2):
     
     """
     from scipy import linalg as LA
-
     
     m, n = data.shape
     # mean center the data, i.e. calculate the average "row" and subtract it
@@ -8493,8 +8592,6 @@ def pca_bootstrap(Y, ndim=2, nboot=100):
     
     
     return pc_dict
-    
-
 
 
 
