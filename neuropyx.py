@@ -3608,7 +3608,7 @@ def plot_trajectories(PC, M, pre, post, istate=1, dt=2.5, ma_thr=10, ma_rem_exce
                 
 
 
-def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, ax='', 
+def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, ax='', nrem2wake=False,
                    pscatter=True, local_coord=False, outline_std=True, rem_onset=False, rem_offset=False,
                    pre_win=30, post_win=30, rem_min_dur=0, break_out=True, break_in=False, prefr=False, scale=1.645):
     """
@@ -3806,9 +3806,9 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
     sns.despine()
 
     # just the onset of REM as single dot:
-    rem_start = [s[0] for s in sleepy.get_sequences(np.where(M==2)[0]) if len(s)*dt >= rem_min_dur and s[0]*dt >= pre_win]    
-
-    rem_start = [s[0] for s in sleepy.get_sequences(np.where(M==2)[0]) if len(s)*dt >= rem_min_dur and s[0]*dt >= pre_win and M[s[0]-1]==3]    
+    rem_start = [s[0] for s in sleepy.get_sequences(np.where(M==1)[0]) if len(s)*dt >= rem_min_dur and s[0]*dt >= pre_win]    
+    if nrem2wake:
+        rem_start = [s[0] for s in sleepy.get_sequences(np.where(M==2)[0]) if len(s)*dt >= rem_min_dur and s[0]*dt >= pre_win and M[s[0]-1]==3]    
 
 
     if rem_onset:
@@ -3849,6 +3849,8 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
         cbar.set_label("Time (s)")
             
     df_breakout = []
+    data_ampl = []
+    df_ampl = []
     if break_out:
         seq = sleepy.get_sequences(np.where(M==1)[0])
         idx = state_idx[3]
@@ -3868,11 +3870,28 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
         w[:,1] = pc2
                                         
         first = []
+        if not nrem2wake:
+            # NREM -> REM
+            for r in rem_start:
+                ifirst = last_subspace_point(r, PC[0:2,:], meanc, covar, scale=scale)
+                first.append(ifirst)
+                plt.plot(PC[0,ifirst], PC[1,ifirst], 'ro')
+        else:
+            # NREM -> Wake
+            for r in rem_start:
+                if not is_in_ellipse(r, PC[0:2,:], meanc, covar, scale=scale):
+                    ifirst = last_subspace_point(r, PC[0:2,:], meanc, covar, scale=scale)
+                    first.append(ifirst)            
+                    plt.plot(PC[0,ifirst], PC[1,ifirst], 'ro')
+            
         for r in rem_start:
-            ifirst = last_subspace_point(r, PC[0:2,:], meanc, covar, scale=scale)
-            first.append(ifirst)
-            plt.plot(PC[0,ifirst], PC[1,ifirst], 'ro')
-                    
+            tmp1 = PC[0,r-ipre_win:r+1]
+            tmp2 = PC[1,r-ipre_win:r+1]
+            
+            data_ampl += [[tmp1.max(), tmp2.max()]]
+            
+        df_ampl = pd.DataFrame(data=data_ampl, columns=['pc1', 'pc2'])
+        
         # Alternative way of calculating the eigenvectors of the
         # covariance matrix:            
         # v, w = linalg.eigh(covar)
@@ -3907,8 +3926,6 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
             porg1.append(p[0])
             porg2.append(p[1])
             
-        #print(np.array(first_angles).mean())        
-        #print(first_angles)
         df_breakout = pd.DataFrame({'angle':first_angles, 'pc1':c1, 'pc2':c2, 
                                     'pc1_org':porg1, 'pc2_org':porg2, 
                                     'pc1_rel':porg1_rel, 'pc2_rel':porg2_rel})
@@ -3984,7 +4001,7 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
                                     'pc1_org':porg1, 'pc2_org':porg2, 
                                     'pc1_rel':porg1_rel, 'pc2_rel':porg2_rel})
                                     
-    return ax, df_breakout, df_breakin
+    return ax, df_breakout, df_breakin, df_ampl
     
 
 
@@ -4166,6 +4183,7 @@ def _jet_plot(x, y, ax, cmap="YlOrBr", lw=1):
     
     return sm  # Return the ScalarMappable object
 
+
 def mahalanobis_distance(point, mean, covariance_matrix):
     diff = point - mean
     inv_covariance_matrix = np.linalg.inv(covariance_matrix)
@@ -4182,6 +4200,10 @@ def last_subspace_point(istate, PC, meanc, Ci, scale=np.sqrt(2)):
     ifirst = i+1
     return ifirst
     
+
+def is_in_ellipse(istate, PC, meanc, Ci, scale=np.sqrt(2)):
+    return mahalanobis_distance(PC[:,istate], meanc, Ci) <= scale
+
 
 def first_subspace_point(istate, PC, meanc, Ci, scale=np.sqrt(2)):    
     i = istate    
