@@ -3194,6 +3194,7 @@ def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], min_laser=20, pzscore
                 PC[i,:] = (PC[i,:]- PC[i,:].mean()) / PC[i,:].std()
 
         data = []
+        ev = 0
         for i,j in zip(idxs, idxe):
             if i > ipre and i+ipost < nhypno:
                 
@@ -3247,12 +3248,13 @@ def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], min_laser=20, pzscore
                 
                     if inrem <= dur_rem_pre * 2:
                         refr = 'yes'
-                                
-                data += zip([mouse]*nt*ndim, tvec, vec, vecz, 
+                               
+                data += zip([mouse]*nt*ndim, [ev]*nt*ndim, tvec, vec, vecz, 
                             label, [i]*nt*ndim, [start_state]*nt*ndim, [start_state_int]*nt*ndim,
                             m_cut, [lsr_rem]*nt*ndim, [refr]*nt*ndim)
+                ev += 1
                                                         
-        df = pd.DataFrame(data=data, columns=['mouse', 'time', 'val', 'valz', 
+        df = pd.DataFrame(data=data, columns=['mouse', 'ev', 'time', 'val', 'valz', 
                                               'pc', 'lsr_start', 'start_state', 'start_state_int',
                                               'state', 'success', 'refractory'])
         
@@ -3810,12 +3812,11 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
     if nrem2wake:
         rem_start = [s[0] for s in sleepy.get_sequences(np.where(M==2)[0]) if len(s)*dt >= rem_min_dur and s[0]*dt >= pre_win and M[s[0]-1]==3]    
 
-
+    ipre_win = int(pre_win/dt)
     if rem_onset:
         for r in rem_start[:]:
             plt.plot(PC[0,r], PC[1,r], 'c*')
     
-        ipre_win = int(pre_win/dt)
         for r in rem_start:
             pc1, pc2 = PC[0,r-ipre_win:r+1], PC[1,r-ipre_win:r+1]
             sm = _jet_plot(pc1, pc2, ax, lw=2)
