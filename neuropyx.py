@@ -956,6 +956,7 @@ def fr_transitions_stats(df_trans, base_int, unit_avg=True, dt=2.5):
     return df_stats
 
 
+
 def pc_transitions(PC, M, transitions, pre, post, si_threshold, sj_threshold, 
                    ma_thr=10, ma_rem_exception=False, sdt=2.5, ma_mode=False, 
                    kcuts=[], allowed_idx=[]):
@@ -1096,6 +1097,216 @@ def pc_transitions(PC, M, transitions, pre, post, si_threshold, sj_threshold,
     df = pd.DataFrame(data=data, columns=['event', 'pc', 'time', 'fr', 'trans'])
 
     return df
+
+
+
+def pc_transitions_laser(mouse, PC, M, transitions, pre, post, si_threshold, sj_threshold, 
+                   ma_thr=10, ma_rem_exception=False, sdt=2.5, ma_mode=False, 
+                   kcuts=[], allowed_idx=[], pzscore_pc=True, config_file=''):
+    """
+    
+
+    Parameters
+    ----------
+    PC : np.array 
+        Number of PCx x number of time bins
+        PCs; each row corresponds to one PC.
+    M : np.array
+        hynpogram.
+    transitions : TYPE
+        DESCRIPTION.
+    pre : TYPE
+        DESCRIPTION.
+    post : TYPE
+        DESCRIPTION.
+    si_threshold : TYPE
+        DESCRIPTION.
+    sj_threshold : TYPE
+        DESCRIPTION.
+    ma_thr : TYPE, optional
+        DESCRIPTION. The default is 10.
+    ma_rem_exception : bool, optional
+        If True, don't touch wake following REM sleep. The default is False.
+    sdt : float, optional
+        time bin duration in seconds of one brain state. The default is 2.5.
+    ma_mode : bool, optional
+        If True, then specifically analysis transitions from and to MAs. 
+        Note that when considering transitions from and to NREM, MAs are 
+        considered as NREM sleep.
+    kcuts : TYPE, optional
+        DESCRIPTION. The default is [].
+    allowed_idx : TYPE, optional
+        DESCRIPTION. The default is [].
+
+    Returns
+    -------
+    df : TYPE
+        DESCRIPTION.
+
+    """
+    dt = 2.5
+    states = {1:'R', 2:'W', 3:'N', 4:'M'}
+    
+    nhypno = M.shape[0]
+    ndim = PC.shape[0]
+    tidx = np.arange(0, nhypno)
+    
+    
+    # NEW 07/01/22:
+    # get the indices (in brainstate time) that we're going to completely discard:
+    if len(kcuts) > 0:
+        kidx = []
+        for kcut in kcuts:
+            a = int(kcut[0]/dt)
+            b = int(kcut[-1]/dt)
+            if b > len(M):
+                b = len(M)
+            kidx += list(np.arange(a, b))
+        
+        tidx = np.setdiff1d(tidx, kidx)
+        M = M[tidx]
+        nhypno = len(tidx)
+    ###########################################################################   
+    
+        
+    ipre  = int(np.round(pre/sdt))
+    ipost = int(np.round(post/sdt))
+    m = ipre + ipost
+    t = np.arange(-ipre, ipost) * sdt
+    
+    # flatten out MAs
+    if ma_thr>0:
+        seq = sleepy.get_sequences(np.where(M==2)[0])
+        for s in seq:
+            if np.round(len(s)*sdt) <= ma_thr:
+                if ma_rem_exception:
+                    if (s[0]>=1) and (M[s[0] - 1] != 1):
+                        if ma_mode:
+                            M[s] = 4
+                        else:
+                            M[s] = 3
+                else:
+                    if ma_mode:
+                        M[s] = 4
+                    else:
+                        M[s] = 3    
+
+    Mrepr = M.copy()
+    M[M==4] = 3
+
+    if not ma_mode:
+        #just forget about MAs:
+        Mrepr = M
+
+    if len(allowed_idx) == 0:
+        allowed_idx = range(0, len(M))
+
+        
+
+    #######################################################################
+    # get laser start and end index after excluding kcuts: ################
+    ddir =  load_config(config_file)[mouse]['SL_PATH']
+    ppath, name = os.path.split(ddir)
+    
+    sr = sleepy.get_snr(ppath, name)
+    nbin = int(np.round(sr)*dt)
+
+
+
+    lsr = so.loadmat(os.path.join(ddir, 'laser_%s.mat' % name), squeeze_me=True)['laser']
+
+    idxs, idxe = sleepy.laser_start_end(lsr)
+    idxs = [int(i/nbin) for i in idxs]
+    idxe = [int(i/nbin) for i in idxe]
+
+    laser_idx = []
+    for (si,sj) in zip(idxs, idxe):
+        laser_idx += list(range(si,sj+1))
+
+    nlsr = int(np.floor(lsr.shape[0]/nbin))
+    laser = np.zeros((nlsr,))
+    laser[laser_idx] = 1
+    laser = laser[tidx]
+    # get again indices after kcut
+    laser_idx = np.where(laser == 1)[0]
+
+    idxs = [s[0]  for s in sleepy.get_sequences(np.where(laser == 1)[0])]
+    idxe = [s[-1] for s in sleepy.get_sequences(np.where(laser == 1)[0])]
+    #######################################################################
+    
+    # zscore pcs:
+    if pzscore_pc:
+        for i in range(PC.shape[0]):
+            PC[i,:] = (PC[i,:]- PC[i,:].mean()) / PC[i,:].std()
+    
+    
+    data = []
+    ev = 0
+    for count,fr in enumerate(PC):
+        label = 'pc%d' % int(count+1)
+        
+        for (si,sj) in transitions:
+            # string label for type of transition:
+            sid = states[si] + states[sj]
+            if si == 3 and not ma_mode:
+                seq = sleepy.get_sequences(np.where(M==si)[0])
+            elif si==3 and ma_mode:
+                seq = sleepy.get_sequences(np.where(Mrepr==si)[0])
+            else:
+                seq = sleepy.get_sequences(np.where(Mrepr==si)[0])
+            
+            for s in seq:
+                # ti is the last bin in the current sequence
+                ti = s[-1]
+    
+                if si == 3 and ma_mode:
+                    p = s[0]
+                    
+                    p = p-1
+                    while p > 0 and M[p] == 3:
+                        p = p-1
+                    p = p+1
+                    s = np.arange(p, ti+1)
+    
+                # check if next state is sj; only then continue
+                if ti < len(M)-1 and Mrepr[ti+1] == sj:
+                    # go into future
+                    p = ti+1
+                    if sj == 3:
+                        # if sj == 3, we're treating MAs as NREM
+                        while p<len(M)-1 and M[p] == sj:
+                            p += 1
+                    else:
+                        while p<len(M)-1 and Mrepr[p] == sj:
+                            p += 1
+                    p -= 1
+                    sj_idx = list(range(ti+1, p+1))
+                    
+                    
+                    # so the indices of state si are seq
+                    # the indices of state sj are sj_idx
+    
+                    if ti in allowed_idx and ipre <= ti < len(M)-ipost and len(s)*sdt >= si_threshold[si-1] and len(sj_idx)*sdt >= sj_threshold[sj-1]:
+                        act = fr[ti-ipre+1:ti+ipost+1]
+                        # Note: ti+1 is the first time point of the "post" state
+                        # i = 10, ipre = 2, ipost = 2
+                        # 8,9,10
+                        # np.arange(8,12) = 8,9,10,11,12
+                        #pdb.set_trace()
+                        
+                        laser_on = 'no'
+                        if ti in laser_idx:
+                            laser_on = 'yes'
+
+                        
+                        data += zip([s[0]]*m, [label]*m, t, act, [sid]*m, [laser_on]*m)                                               
+                        ev += 1
+
+    df = pd.DataFrame(data=data, columns=['event', 'pc', 'time', 'fr', 'trans', 'laser_on'])
+
+    return df
+
+
 
 
 
@@ -1606,7 +1817,45 @@ def kcut_idx(M, X, kcuts, dt=2.5):
         nhypno = len(tidx)
                 
     return tidx
+
+
+
+def kcut_idx2(M, kcuts, X = [], dt=2.5):
+    """
+    Using the values defined in the mouse_config.txt file (field KCUT:), determine
+    the indices used for further calculations.
     
+    @param: np.array, brainstate sequence
+    @param X: np.pandas or np.array, array or DataFrame with time axis using same binning as @M
+    @param kcuts: list of tuples, areas at the beginning or end that should be discarded
+
+    @return tidx: np.array, list of indices in @M used for further calculation, i.e. indices 
+            that are NOT within the ranges defined in @kcuts.
+    """
+
+
+    nhypno = len(M)    
+    if len(X) > 0:
+        n = np.max(X.shape)
+        nhypno = np.min((len(M), n))
+        
+    tidx = np.arange(0, nhypno)
+    
+    # get the indices (in brainstate time) that we're going to completely discard:
+    if len(kcuts) > 0:
+        kidx = []
+        for kcut in kcuts:
+            a = int(kcut[0]/dt)
+            b = int(kcut[-1]/dt)
+            if b > len(M):
+                b = len(M)
+            kidx += list(np.arange(a, b))
+        
+        tidx = np.setdiff1d(tidx, kidx)
+        M = M[tidx]
+        nhypno = len(tidx)
+                
+    return tidx
 
    
 def align_pcsign(PC, mouse, rem_pca=0, kcuts=[], config_file='', pnorm_spec=True):
@@ -3114,6 +3363,8 @@ def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], min_laser=20, pzscore
         'state': brain state sequence 
         'start_state_int': How long does it take till the brain state at laser onset
                            switches to a different state
+        'valz': PC values during laser trial, for each trial the PC vector
+                is z-scored.
 
     """
     dt = 2.5
@@ -3223,6 +3474,10 @@ def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], min_laser=20, pzscore
                     
                 start_state = M[i]
                 
+                rem_delay = -1
+                if lsr_rem == 'yes':
+                    rem_delay = np.where(m_lsr == 1)[0][0] * dt
+                
                 # duration of interval of brainstate start_state till the
                 # brain_state switches:
                 start_state_int = len(m_lsr)*dt                
@@ -3251,12 +3506,12 @@ def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], min_laser=20, pzscore
                                
                 data += zip([mouse]*nt*ndim, [ev]*nt*ndim, tvec, vec, vecz, 
                             label, [i]*nt*ndim, [start_state]*nt*ndim, [start_state_int]*nt*ndim,
-                            m_cut, [lsr_rem]*nt*ndim, [refr]*nt*ndim)
+                            m_cut, [lsr_rem]*nt*ndim, [rem_delay]*nt*ndim, [refr]*nt*ndim)
                 ev += 1
                                                         
         df = pd.DataFrame(data=data, columns=['mouse', 'ev', 'time', 'val', 'valz', 
                                               'pc', 'lsr_start', 'start_state', 'start_state_int',
-                                              'state', 'success', 'refractory'])
+                                              'state', 'success', 'rem_delay', 'refractory'])
         
     if pplot:
         plt.figure() 
@@ -3610,7 +3865,7 @@ def plot_trajectories(PC, M, pre, post, istate=1, dt=2.5, ma_thr=10, ma_rem_exce
                 
 
 
-def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, ax='', nrem2wake=False,
+def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, ax='', nrem2wake=False, nrem2wake_step=4,
                    pscatter=True, local_coord=False, outline_std=True, rem_onset=False, rem_offset=False,
                    pre_win=30, post_win=30, rem_min_dur=0, break_out=True, break_in=False, prefr=False, scale=1.645):
     """
@@ -3633,6 +3888,11 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
         DESCRIPTION. The default is 2.5.
     ax : TYPE, optional
         DESCRIPTION. The default is ''.
+    nrem2wake : Bool, optional
+        if True, show NREM->Wake transitions
+    nrem2wake_step: int, optional
+        Show every nrem2wake_step-th NREM->Wake transition; otherwise
+        it gets too clusttered
     pscatter : TYPE, optional
         DESCRIPTION. The default is True.
     local_coord : TYPE, optional
@@ -3811,6 +4071,7 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
     rem_start = [s[0] for s in sleepy.get_sequences(np.where(M==1)[0]) if len(s)*dt >= rem_min_dur and s[0]*dt >= pre_win]    
     if nrem2wake:
         rem_start = [s[0] for s in sleepy.get_sequences(np.where(M==2)[0]) if len(s)*dt >= rem_min_dur and s[0]*dt >= pre_win and M[s[0]-1]==3]    
+        rem_start = rem_start[1::nrem2wake_step]
 
     ipre_win = int(pre_win/dt)
     if rem_onset:
@@ -3883,7 +4144,7 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
                 if not is_in_ellipse(r, PC[0:2,:], meanc, covar, scale=scale):
                     ifirst = last_subspace_point(r, PC[0:2,:], meanc, covar, scale=scale)
                     first.append(ifirst)            
-                    plt.plot(PC[0,ifirst], PC[1,ifirst], 'ro')
+                    #plt.plot(PC[0,ifirst], PC[1,ifirst], 'ro')
             
         for r in rem_start:
             tmp1 = PC[0,r-ipre_win:r+1]
@@ -4170,10 +4431,16 @@ def state_space_geometry(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=
 
 
 
-def _jet_plot(x, y, ax, cmap="YlOrBr", lw=1):
+def _jet_plot(x, y, ax, color='', cmap="YlOrBr", lw=1):
     from matplotlib.cm import ScalarMappable
     n = len(x)
-    clrs = sns.color_palette(cmap, n)
+    if len(color) == 0 and type(cmap) == str:
+        clrs = sns.color_palette(cmap, n)
+    elif len(color) > 0:
+        clrs = [color]*n
+    else:
+        values = np.linspace(0, 1, n)
+        clrs = cmap(values)
     
     for (i,j) in zip(range(0,n-1), range(1, n)):
         ax.plot([x[i], x[i+1]], [y[i], y[i+1]], color=clrs[i], lw=lw)
@@ -4182,7 +4449,8 @@ def _jet_plot(x, y, ax, cmap="YlOrBr", lw=1):
     sm = ScalarMappable(cmap=cmap)
     sm.set_array([])  # You need to set an array, but it can be empty
     
-    return sm  # Return the ScalarMappable object
+    # Return the ScalarMappable object
+    return sm  
 
 
 def mahalanobis_distance(point, mean, covariance_matrix):
@@ -4338,6 +4606,99 @@ def irem_trends(units, M, nsmooth=0, pzscore=False, kcut=[], irem_dur=120, wake_
 
 
 
+def rem_prepost(units, M, pzscore=True,  ma_thr=20, ma_rem_exception=True, kcuts=[], nsmooth=0, postwake_thr=60):
+    
+    dt = 2.5
+    unitIDs = [unit for unit in units.columns if '_' in unit]
+    unitIDs = [unit for unit in unitIDs if re.split('_', unit)[1] == 'good']
+
+    nhypno = np.min((len(M), units.shape[0]))
+    M = M[0:nhypno]
+    tidx = np.arange(0, nhypno)
+            
+    # KCUT ####################################################################
+    # get the indices (in brainstate time) that we're going to completely discard:
+    if len(kcuts) > 0:
+        kidx = []
+        for kcut in kcuts:
+            a = int(kcut[0]/dt)
+            b = int(kcut[-1]/dt)
+            if b > len(M):
+                b = len(M)
+            kidx += list(np.arange(a, b))
+        
+        tidx = np.setdiff1d(tidx, kidx)
+        M = M[tidx]
+        nhypno = len(tidx)
+    ###########################################################################    
+        
+    # flatten out MAs #########################################################
+    if ma_thr>0:
+        seq = sleepy.get_sequences(np.where(M==2)[0])
+        for s in seq:
+            if np.round(len(s)*dt) <= ma_thr:
+                if ma_rem_exception:
+                    if (s[0]>1) and (M[s[0] - 1] != 1):
+                        M[s] = 3
+                else:
+                    M[s] = 3
+    ###########################################################################    
+    
+    
+    R = np.zeros((units.shape[1], len(tidx)))
+    for i, unit in enumerate(unitIDs):
+        tmp = sleepy.smooth_data(np.array(units[unit]),nsmooth)
+        if pzscore:
+            R[i,:] = (tmp[tidx] - tmp[tidx].mean()) / tmp[tidx].std()
+        else:
+            R[i,:] = tmp[tidx]
+
+
+    seq = sleepy.get_sequences(np.where(M==1)[0])
+    data = []
+    # go over all units
+    for iunit,ID in enumerate(unitIDs):
+        fr = R[iunit,:]
+        #region = cell_info[(cell_info.ID == ID)]['brain_region'].iloc[0]
+        
+        # go over all inter-REM episodes
+        if len(seq) >= 1:
+            for s in seq:                
+                
+                istart = s[0]
+                iend = s[-1]
+                
+                
+                if M[istart-1] == 3:
+                    a = istart-1
+                    
+                    while(M[a] == 3) and a>0:
+                        a = a-1                    
+                    a = a+1
+                    nrempre_idx = np.arange(a, istart)
+                    
+                    b = iend+1
+                    
+                    while b<len(M)-1 and M[b] != 3:
+                        b = b+1
+                    
+                    if  b<len(M)-1 and (b-iend)*dt < postwake_thr and M[b] == 3:
+                        c = b
+                        while M[c] == 3 and c<len(M)-1:
+                            c += 1
+                        nrempost_idx = np.arange(b, c)
+                        
+                        if len(nrempre_idx) > 0 and len(nrempost_idx) > 0:
+                            rem_pre = len(s)*dt
+                            dfr = fr[nrempost_idx].mean() -  fr[nrempre_idx].mean()
+                            data += [[ID, istart, fr[nrempre_idx].mean(), fr[nrempost_idx].mean(), dfr, rem_pre]]
+                    
+                    
+    df = pd.DataFrame(data=data, columns=['ID', 'rem_id', 'fr_pre', 'fr_post', 'dfr', 'rem_pre'])
+    return df
+
+
+
 def remrem_sections(units, cell_info, M, nsections=5, nsections_rem=0, nsmooth=0, pzscore=False, kcuts=[], 
                     irem_dur=120, refractory_rule=False, wake_prop_threshold=0.5, ma_thr=10, ma_rem_exception=False, 
                     border=0,
@@ -4375,6 +4736,8 @@ def remrem_sections(units, cell_info, M, nsections=5, nsections_rem=0, nsmooth=0
         Maximum allowed proportion of wake states within inter-REM interval. 
         If proportion of wake > $wake_prop_threshold, then discard the given inter-REM interval
         The default is 0.5.
+    border : float, optional
+        If > 0, cut off the last $border seconds at the end of the interREM interval
     nan_check: bool, optional
         If True, 
 
@@ -4569,7 +4932,15 @@ def remrem_sections(units, cell_info, M, nsections=5, nsections_rem=0, nsmooth=0
         df2 = df2[~df2.fr.isna()]    
         res = stats.linregress(df2['section'], df2['fr'])
         data += [[ID, 'Wake', res.slope, res.rvalue, res.pvalue, region]]            
-    df_stats = pd.DataFrame(data=data, columns=['ID', 'state', 's', 'r', 'p', 'brain_region'])
+        
+        df2 = df_trials[(df_trials.ID == ID) & (df_trials.state == 'NRW')]
+        df2 = df2[~df2.fr.isna()]    
+        res = stats.linregress(df2['section'], df2['fr'])
+        data += [[ID, 'NRW', res.slope, res.rvalue, res.pvalue, region]]            
+        
+        
+        
+    df_stats = pd.DataFrame(data=data, columns=['ID', 'state', 'slope', 'r', 'p', 'brain_region'])
     
     return df_trials, dfm, df_stats                
 
@@ -5967,12 +6338,12 @@ def state_correlation(fr1, fr2, M, istate=3, win=60, tbreak=10, dt=2.5, pplot=Tr
     istate : 1, 2, or 3, optional
         Calculate correlation only for sequences of REM (1), 
         Wake (2), or NREM (3). The default is 3.
-    win : TYPE, optional
-        DESCRIPTION. The default is 60.
+    win : float, optional
+        The cross-correlation ranges from -win to +win seconds. The default is 60.
     tbreak : TYPE, optional
         DESCRIPTION. The default is 10.
-    dt : TYPE, optional
-        DESCRIPTION. The default is 2.5.
+    dt : float, optional
+        Time bin for firing rates. The default is 2.5.
     pplot : TYPE, optional
         DESCRIPTION. The default is True.
 
@@ -5983,8 +6354,8 @@ def state_correlation(fr1, fr2, M, istate=3, win=60, tbreak=10, dt=2.5, pplot=Tr
     t : np.array
         time vector.
     """        
-    seq = sleepy.get_sequences(np.where(M == istate)[0], ibreak=int(tbreak/2.5)+1)
-    seq = [s for s in seq if len(s)*2.5 > 2*win]
+    seq = sleepy.get_sequences(np.where(M == istate)[0], ibreak=int(tbreak/dt)+1)
+    seq = [s for s in seq if len(s)*dt > 2*win]
 
     iwin = int(win / dt)
     CC = []
@@ -6041,7 +6412,8 @@ def state_correlation(fr1, fr2, M, istate=3, win=60, tbreak=10, dt=2.5, pplot=Tr
 
 
 def state_correlation_avg(units, ids1, ids2, M, kcuts=[], istate=3, win=60, tbreak=10, nsmooth=0, 
-                          pzscore=True, dt=2.5, pplot=True, self_correlation=False):
+                          pzscore=True, dt=2.5, pplot=True, self_correlation=False, 
+                          config_file='', mouse=''):
     """
     State-dependent cross-correlation. 
     Autocorrelate each pair of units within two sets of units (@ids1 and @ids2). 
@@ -6130,7 +6502,6 @@ def state_correlation_avg(units, ids1, ids2, M, kcuts=[], istate=3, win=60, tbre
     #     unitIDs = [unit for unit in unitIDs if re.split('_', unit)[1] == 'good']
     #     nhypno  = np.min((len(M), units.shape[0]))
 
-
     
     fr1 = np.array(units[ids1]).T
     fr2 = np.array(units[ids2]).T
@@ -6184,12 +6555,145 @@ def state_correlation_avg(units, ids1, ids2, M, kcuts=[], istate=3, win=60, tbre
         tmax = dfs.iloc[imax]['time']
         ccmax = dfs.iloc[imax]['cc']
         id1 = dfs.iloc[imax]['id1']
-        id2 = dfs.iloc[imax]['id2']
+        id2 = dfs.iloc[imax]['id2']        
+        sgn = np.sign(ccmax)        
+        data += [[tmax, ccmax, l, id1, id2, sgn]]    
+    dfr = pd.DataFrame(data=data, columns=['time', 'cc', 'label', 'id1', 'id2', 'sgn'])
         
-        data += [[tmax, ccmax, l, id1, id2]]
+    return df, dfr
+
+
+
+def state_correlation_avg_fine(ids1, ids2, mouse, kcuts=[], istate=3, win=60, tbreak=10, nsmooth=0, 
+                          pzscore=True, dt=2.5, pplot=True, self_correlation=False, 
+                          config_file='mouse_config.txt'):
+    dt = 2.5  
+    NDOWN = 250
+    NUP = int(dt / (0.001 * NDOWN))
+
+    path = load_config(config_file)[mouse]['SL_PATH']
+    ppath, file = os.path.split(path)
+    M = sleepy.load_stateidx(ppath, file)[0]
+
+
+    # # flatten out MAs #########################################################
+    # if ma_thr>0:
+    #     seq = sleepy.get_sequences(np.where(M==2)[0])
+    #     for s in seq:
+    #         if np.round(len(s)*dt) <= ma_thr:
+    #             if ma_rem_exception:
+    #                 if (s[0]>1) and (M[s[0] - 1] != 1):
+    #                     M[s] = 3
+    #             else:
+    #                 M[s] = 3
+    # ###########################################################################    
+    tr_path = load_config(config_file)[mouse]['TR_PATH']
+    #units = np.load(os.path.join(tr_path,'1k_train.npz')) 
+
+    if os.path.isfile(os.path.join(tr_path,'1k_train.npz')):
+        units = np.load(os.path.join(tr_path,'1k_train.npz')) 
+    else:
+        units = np.load(os.path.join(tr_path,'lfp_1k_train.npz'))     
+
+
+
+    unitIDs = [unit for unit in list(units.keys()) if '_' in unit]
+    unitIDs = [unit for unit in unitIDs if re.split('_', unit)[1] == 'good']
+
     
-    dfr = pd.DataFrame(data=data, columns=['time', 'cc', 'label', 'id1', 'id2'])
+    dt = dt / NUP
+    M = upsample_mx(M, NUP)
+    nhypno = int(np.min((len(M), units[unitIDs[0]].shape[0]/NDOWN)))
+
+
+    M = M[0:nhypno]
+    tidx = np.arange(0, nhypno)
+
+    ###########################################################################    
+    # NEW 07/01/22:
+    # get the indices (in brainstate time) that we're going to completely discard:
+    if len(kcuts) > 0:
+        kidx = []
+        for kcut in kcuts:
+            a = int(kcut[0]/dt)
+            b = int(kcut[-1]/dt)
+            if b > len(M):
+                b = len(M)
+            kidx += list(np.arange(a, b))
         
+        tidx = np.setdiff1d(tidx, kidx)
+        M = M[tidx]
+        nhypno = len(tidx)
+    ###########################################################################    
+
+    # REWRITE:
+
+    # fr_file = os.path.join(tr_path, 'fr_fine_ndown%d.mat' % NDOWN)
+    # if not os.path.isfile(fr_file):
+    #     for i,unit in enumerate(unitIDs):
+    #         tmp = sleepy.downsample_vec(np.array(units[unit]), NDOWN)            
+    #         R[i,:] = tmp[tidx]
+    #     so.savemat(fr_file, {'R':R, 'ndown':NDOWN})
+    # else:
+    #     R = so.loadmat(fr_file, squeeze_me=True)['R']
+        
+
+    fr1_new = np.zeros((len(ids1), nhypno))
+    fr2_new = np.zeros((len(ids2), nhypno))
+
+    print('Starting downsampling, smoothing and z-scoring')
+
+    for i,ID in enumerate(ids1):
+        fr1 = np.array(units[ID])
+        fr1 = sleepy.downsample_vec(fr1, NDOWN)            
+        
+        if nsmooth > 0:
+            fr1 = sleepy.smooth_data(fr1, nsmooth)
+        if pzscore:
+            fr1 = (fr1[tidx]-fr1[tidx].mean()) / fr1[tidx].std()
+        fr1_new[i,:] = fr1
+
+    for i,ID in enumerate(ids2):
+        fr2 = np.array(units[ID])
+        fr2 = sleepy.downsample_vec(fr2, NDOWN)            
+
+        if nsmooth > 0:
+            fr2 = sleepy.smooth_data(fr2, nsmooth)
+        if pzscore:
+            fr2 = (fr2[tidx]-fr2[tidx].mean()) / fr2[tidx].std()
+        fr2_new[i,:] = fr2
+    
+    print('done.')
+    
+    fr1 = fr1_new
+    fr2 = fr2_new
+
+    data = []
+    for i in range(fr1.shape[0]):
+        for j in range(fr2.shape[0]):        
+            cc, t = state_correlation(fr1[i,:], fr2[j,:], M, 
+                                      win=win, istate=istate, tbreak=tbreak, pplot=pplot, dt=dt)
+            
+            cc = np.nanmean(cc, axis=0)            
+            label = ids1[i] + ' x ' + ids2[j]
+            m = len(t)
+            data += zip(t, cc, [label]*m, [ids1[i]]*m, [ids2[j]]*m)
+            
+    df = pd.DataFrame(data=data, columns=['time', 'cc', 'label', 'id1', 'id2'])    
+    labels = df['label'].unique().tolist()
+    
+    data = []
+    for l in labels:
+        dfs = df[df.label == l]
+        imax = np.argmax(np.abs(dfs['cc']))
+        tmax = dfs.iloc[imax]['time']
+        ccmax = dfs.iloc[imax]['cc']
+        id1 = dfs.iloc[imax]['id1']
+        id2 = dfs.iloc[imax]['id2']        
+        sgn = np.sign(ccmax)        
+        data += [[tmax, ccmax, l, id1, id2, sgn]]    
+    dfr = pd.DataFrame(data=data, columns=['time', 'cc', 'label', 'id1', 'id2', 'sgn'])
+
     return df, dfr
 
 
@@ -8115,22 +8619,18 @@ def time_morph(X, nstates):
 
 
 
-def xcorr_frs(unit1, unit2, window, ndown, sr=1000, pplot=False):
-    
-    
+def xcorr_frs(unit1, unit2, window, ndown, sr=1000, pplot=False):     
     dt = 1/sr
     dt_dn = dt * ndown
     
     iwin = int(window / dt_dn)
 
-    
     unit1 = unit1 * 1000
     unit2 = unit2 * 1000
     
     unit1 = sleepy.downsample_vec(unit1, ndown)
     unit2 = sleepy.downsample_vec(unit2, ndown)
-    
-    
+        
     m = np.min([unit1.shape[0], unit2.shape[0]])
     norm = np.nanstd(unit1) * np.nanstd(unit2)
     xx = (1/m) * scipy.signal.correlate(unit1, unit2)/ norm
