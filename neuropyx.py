@@ -4701,7 +4701,7 @@ def rem_prepost(units, M, pzscore=True,  ma_thr=20, ma_rem_exception=True, kcuts
 
 def remrem_sections(units, cell_info, M, nsections=5, nsections_rem=0, nsmooth=0, pzscore=False, kcuts=[], 
                     irem_dur=120, refractory_rule=False, wake_prop_threshold=0.5, ma_thr=10, ma_rem_exception=False, 
-                    border=0,
+                    border=0, linreg_cut=0,
                     nan_check=False):
     """
     Calculate the everage NREM and Wake activity during consecutive sections of the
@@ -4738,6 +4738,10 @@ def remrem_sections(units, cell_info, M, nsections=5, nsections_rem=0, nsmooth=0
         The default is 0.5.
     border : float, optional
         If > 0, cut off the last $border seconds at the end of the interREM interval
+    linreg_cut: float, optional
+        value between 0 and 1. Cut away the first $*100 and last $*100 percent of each
+        normalized firing rate vector for linear regression analysis that goes into
+        df_stats
     nan_check: bool, optional
         If True, 
 
@@ -4922,24 +4926,29 @@ def remrem_sections(units, cell_info, M, nsections=5, nsections_rem=0, nsmooth=0
     
     data = []
     for ID in dfm.ID.unique():
-        df2 = df_trials[(df_trials.ID == ID) & (df_trials.state == 'NREM')]
-        df2 = df2[~df2.fr.isna()]    
-        res = stats.linregress(df2['section'], df2['fr'])
-        region = df2['brain_region'].iloc[0]
-        data += [[ID, 'NREM', res.slope, res.rvalue, res.pvalue, region]]
+        for cond in ['NREM', 'Wake', 'NRW']:
+            df2 = df_trials[(df_trials.ID == ID) & (df_trials.state == cond)]
+            df2 = df2[~df2.fr.isna()]    
+            X = df2['section']
+            Y = df2['fr']
+            
+            ncut = int(nsections * linreg_cut)
+            
+            res = stats.linregress(X[ncut:-ncut], Y[ncut:-ncut])
+            region = df2['brain_region'].iloc[0]
+            data += [[ID, cond, res.slope, res.rvalue, res.pvalue, region]]
+                        
+        # df2 = df_trials[(df_trials.ID == ID) & (df_trials.state == 'Wake')]
+        # df2 = df2[~df2.fr.isna()]    
+        # res = stats.linregress(df2['section'], df2['fr'])
+        # data += [[ID, 'Wake', res.slope, res.rvalue, res.pvalue, region]]            
         
-        df2 = df_trials[(df_trials.ID == ID) & (df_trials.state == 'Wake')]
-        df2 = df2[~df2.fr.isna()]    
-        res = stats.linregress(df2['section'], df2['fr'])
-        data += [[ID, 'Wake', res.slope, res.rvalue, res.pvalue, region]]            
+        # df2 = df_trials[(df_trials.ID == ID) & (df_trials.state == 'NRW')]
+        # df2 = df2[~df2.fr.isna()]    
+        # res = stats.linregress(df2['section'], df2['fr'])
+        # data += [[ID, 'NRW', res.slope, res.rvalue, res.pvalue, region]]            
         
-        df2 = df_trials[(df_trials.ID == ID) & (df_trials.state == 'NRW')]
-        df2 = df2[~df2.fr.isna()]    
-        res = stats.linregress(df2['section'], df2['fr'])
-        data += [[ID, 'NRW', res.slope, res.rvalue, res.pvalue, region]]            
-        
-        
-        
+                
     df_stats = pd.DataFrame(data=data, columns=['ID', 'state', 'slope', 'r', 'p', 'brain_region'])
     
     return df_trials, dfm, df_stats                
