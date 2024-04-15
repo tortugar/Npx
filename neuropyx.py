@@ -3912,7 +3912,8 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
     scale: float
         Scale = 1 means that the drawn ellipse outlines one standard deviation
         for each subspace. Scale = 1.645 outlines the area (of the fitted Gaussian)
-        that comprises 95% of the data distribution.
+        that comprises 90% of the data distribution.
+        Scale = 1.96 outlines 95% of the distribution
         scale = 1.28 comprises 90% of the distribution.
         
 
