@@ -4081,7 +4081,7 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
     
         for r in rem_start:
             pc1, pc2 = PC[0,r-ipre_win:r+1], PC[1,r-ipre_win:r+1]
-            sm = _jet_plot(pc1, pc2, ax, lw=2)
+            sm = _jet_plot(pc1, pc2, ax, lw=2, cmap='magma')
             
         cbar = plt.colorbar(sm, ax=ax, orientation='vertical', pad=0.05, shrink=0.6)  # pad adjusts the distance between the plot and colorbar
         sm.set_clim(-pre_win, 0)
@@ -4104,7 +4104,7 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
                 
         for r in rem_end:
             pc1, pc2 = PC[0,r-ipre_win:r+ipost_win], PC[1,r-ipre_win:r+ipost_win]
-            sm = _jet_plot(pc1, pc2, ax, lw=2, cmap='bwr')
+            sm = _jet_plot(pc1, pc2, ax, lw=2, cmap='magma')
             
         cbar = plt.colorbar(sm, ax=ax, orientation='vertical', pad=0.05, shrink=0.6)  # pad adjusts the distance between the plot and colorbar
         sm.set_clim(-pre_win, post_win)
@@ -4231,7 +4231,7 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
         for r in rem_end:
             ifirst = first_subspace_point(r, PC[0:2,:], meanc, covar, scale=scale)
             first.append(ifirst)
-            plt.plot(PC[0,ifirst], PC[1,ifirst], 'ro')
+            plt.plot(PC[0,ifirst], PC[1,ifirst], 'bo')
                             
         first_angles = []
         c1, c2 = [], []
@@ -7001,6 +7001,320 @@ def plot_firingrates(units, cell_info, ids, mouse,
 
         
 
+def plot_firingrates_withemg(units, cell_info, ids, mouse, 
+                     config_file, tlegend=60, pzscore=True, 
+                     kcuts=[], tstart=0, tend=-1,
+                     pind_axes=True, dt=2.5, nsmooth=0, 
+                     pnorm_spec=False, box_filt=[], 
+                     vm=[], fmax=20, print_unit=False, show_sigma=False):
+    """
+    Plot firing rates along with EEG spectrogram, EMG amplitude, and hypnogram.
+
+    Parameters
+    ----------
+    units : TYPE
+        DESCRIPTION.
+    cell_info : TYPE
+        DESCRIPTION.
+    ids : TYPE
+        DESCRIPTION.
+    mouse : TYPE
+        DESCRIPTION.
+    config_file : TYPE
+        DESCRIPTION.
+    tlegend : TYPE, optional
+        DESCRIPTION. The default is 60.
+    pzscore : TYPE, optional
+        DESCRIPTION. The default is True.
+    kcuts : TYPE, optional
+        DESCRIPTION. The default is [].
+    tstart : TYPE, optional
+        DESCRIPTION. The default is 0.
+    tend : TYPE, optional
+        DESCRIPTION. The default is -1.
+    pind_axes : TYPE, optional
+        DESCRIPTION. The default is True.
+    dt : TYPE, optional
+        DESCRIPTION. The default is 2.5.
+    nsmooth : TYPE, optional
+        DESCRIPTION. The default is 0.
+    pnorm_spec : TYPE, optional
+        DESCRIPTION. The default is False.
+    box_filt : TYPE, optional
+        DESCRIPTION. The default is [].
+    vm : TYPE, optional
+        DESCRIPTION. The default is [].
+    fmax : TYPE, optional
+        DESCRIPTION. The default is 20.
+    print_unit : TYPE, optional
+        DESCRIPTION. The default is False.
+    show_sigma: bool, optional
+        If True, also show sigma power below spectrogram
+
+    Returns
+    -------
+    None.
+
+    """
+    # range for EMG amplitude:
+    r_mu = [5, 50]
+    ids = list(ids)
+    yticks = [0.1, 0.5, 1, 2, 3, 4, 5, 10, 20, 30, 40, 50, 60, 70, 80, 100]
+    plt.figure(figsize=(10,10))
+    sleepy.set_fontarial()
+
+    path = load_config(config_file)[mouse]['SL_PATH']
+    ppath, file = os.path.split(path)
+    M = sleepy.load_stateidx(ppath, file)[0]
+    if len(M) > units.shape[0]:
+        M = M[0:-1]
+    
+    # brain regions corresponding to the unit IDs in @ids:
+    regions = [cell_info[cell_info.ID == i].brain_region.iloc[0] for i in ids]
+    
+    tmp = so.loadmat(os.path.join(ppath, file, 'sp_%s.mat'%file), squeeze_me=True)
+    SP = tmp['SP']
+    freq = tmp['freq']
+    ifreq = np.where(freq <= fmax)[0]
+
+    if len(box_filt) > 0:
+        filt = np.ones(box_filt)
+        filt = np.divide(filt, filt.sum())
+        SP = scipy.signal.convolve2d(SP, filt, boundary='symm', mode='same')
+
+    if pnorm_spec:
+        sp_mean = SP.mean(axis=1)
+        SP = np.divide(SP, np.tile(sp_mean, (SP.shape[1], 1)).T)
+
+    # load EMG
+    tmp = so.loadmat(os.path.join(ppath, file, 'msp_%s.mat' % file), squeeze_me=True)
+    SPEMG = tmp['mSP']
+    i_mu = np.where((freq >= r_mu[0]) & (freq <= r_mu[1]))[0]
+    p_mu = np.sqrt(SPEMG[i_mu, :].sum(axis=0) * (freq[1] - freq[0])) #* 1000.0 # back to muV
+
+
+
+    # cut out kcuts: ###############
+    tidx = kcut_idx(M, units, kcuts)
+    M = M[tidx]
+    units = units.iloc[tidx,:]
+    SP = SP[:,tidx]
+    ################################
+    
+    # set istart and iend
+    if tend == -1:
+        iend = len(M)
+    else:
+        iend = int(np.round(tend/dt))
+    istart = int(np.round(tstart/dt))         
+
+    M = M[istart:iend]
+    # NOTE units.loc[i:j,:] INCLUDES the j-th element, 
+    # that's different from how np.arrays behave
+    units = units.iloc[istart:iend,:]
+    SP = SP[:,istart:iend]
+
+    nunits = len(ids)
+    ntime = units.shape[0]
+    fr = np.array(units[ids]).T
+    if pzscore:
+        for i in range(fr.shape[0]):
+            fr[i,:] = (fr[i,:] - fr[i,:].mean()) / fr[i,:].std()
+    if nsmooth > 0:
+        for i in range(fr.shape[0]):
+            fr[i,:] = sleepy.smooth_data(fr[i,:], nsmooth)
+
+
+    nhypno = np.min((len(M), ntime))
+    M = M[0:nhypno]
+    
+    t = np.arange(0, nhypno)*dt    
+    
+    axes_brs = plt.axes([0.1, 0.95, 0.8, 0.03])
+    
+    cmap = plt.cm.jet
+    my_map = cmap.from_list('brs', [[0, 0, 0], [0, 1, 1], [0.6, 0, 1], [0.8, 0.8, 0.8]], 4)
+    tmp = axes_brs.pcolorfast(t, [0, 1], np.array([M]), vmin=0, vmax=3)
+    tmp.set_cmap(my_map)
+    axes_brs.axis('tight')
+    axes_brs.axes.get_xaxis().set_visible(False)
+    axes_brs.axes.get_yaxis().set_visible(False)
+    axes_brs.spines["top"].set_visible(False)
+    axes_brs.spines["right"].set_visible(False)
+    axes_brs.spines["bottom"].set_visible(False)
+    axes_brs.spines["left"].set_visible(False)
+
+    # plot spectrogram
+    # calculate median for choosing right saturation for heatmap
+    med = np.median(SP.max(axis=0))
+    if len(vm) == 0:
+        vm = [0, med*2.0]    
+    axes_spec = plt.axes([0.1, 0.85, 0.8, 0.08], sharex=axes_brs)    
+    # axes for colorbar
+    axes_cbar = plt.axes([0.9, 0.85, 0.05, 0.08])
+
+    im = axes_spec.pcolorfast(t, freq[ifreq], SP[ifreq,:], vmin=vm[0], vmax=vm[1], cmap='jet')
+    sleepy.box_off(axes_spec)
+    axes_spec.axes.get_xaxis().set_visible(False)
+    axes_spec.spines["bottom"].set_visible(False)
+    axes_spec.set_ylabel('Freq.\n(Hz)')
+    
+    # colorbar for EEG spectrogram
+    cb = plt.colorbar(im, ax=axes_cbar, pad=0.0, aspect=10.0, location='right')
+    if pnorm_spec:
+        #cb.set_label('Norm. power')
+        cb.set_label('')
+    else:
+        cb.set_label('Power ($\mathrm{\mu}$V$^2$s)')
+    axes_cbar.set_alpha(0.0)
+    sleepy._despine_axes(axes_cbar)
+    
+    # EMG amplitude
+    axes_emg = plt.axes([0.1, 0.75+0.02, 0.8, 0.06], sharex=axes_brs)
+    axes_emg.plot(t, p_mu[istart:iend], color='black')
+    
+    sleepy.box_off(axes_emg)
+    axes_emg.patch.set_alpha(0.0)
+    axes_emg.spines["bottom"].set_visible(False)
+    axes_emg.set_xticks([])
+    #emg_ylim = [0, np.max(p_mu[istart:iend])]
+    #axes_emg.set_ylim(emg_ylim)
+    axes_emg.set_ylabel('Ampl.\n($\mathrm{\mu}$V)')
+    
+    if not show_sigma:    
+        yrange = 0.7
+    else:
+        yrange = 0.59
+        sigma = [10, 15]
+        isigma = np.where((freq>=sigma[0])&(freq<=sigma[1]))[0]
+
+        if pnorm_spec:            
+            
+            sigma_pow = SP[isigma,:].mean(axis=0)        
+        else:
+            dfreq = freq[2] - freq[1]
+            sigma_pow = SP[isigma, :].sum(axis=0)*dfreq
+                    
+        # show sigmapower
+        axes_sig = plt.axes([0.1, 0.7, 0.8, 0.05], sharex=axes_brs)
+        
+        #pdb.set_trace()
+        axes_sig.plot(t, sigma_pow, color='gray')
+        axes_sig.set_xlim([t[0], t[-1]])
+        axes_sig.set_ylabel('$\mathrm{\sigma}$ power')
+
+        axes_sig.spines["top"].set_visible(False)
+        axes_sig.spines["right"].set_visible(False)
+        axes_sig.spines["bottom"].set_visible(False)
+        axes_sig.axes.get_xaxis().set_visible(False)
+        
+    if pind_axes:
+        palette = sns.color_palette("husl", nunits)
+        yborder = (yrange/nunits)*0.3        
+        ax = []
+        for i in range(nunits):
+            tmp = plt.axes([0.1, 0.1+(yrange/nunits)*i, 0.8, yrange/nunits-yborder], sharex=axes_brs)
+            
+            tmp.axes.get_xaxis().set_visible(False)
+            tmp.spines["bottom"].set_visible(False)
+            tmp.spines["top"].set_visible(False)
+            tmp.spines["right"].set_visible(False)            
+            ax.append(tmp)     
+       
+        for i in range(nunits):
+            a = ax[i]   
+            perc = np.percentile(fr[i,istart:iend], 99)
+            d = yticks - perc
+            ii = np.where(d < 0)[0][-1]
+            ytick = yticks[ii]       
+            #ytick = yticks[np.argmin((np.abs(yticks - perc)))]
+
+            a.set_yticks([0, ytick], ['', ytick])
+            a.set_ylim([-1, np.max(fr[i,:])])
+            a.plot(t,fr[i,:], color=palette[i])
+    
+
+        # axes for time legend
+        axes_legend = plt.axes([0.1,0.06,0.8,0.02], sharex=axes_brs)
+        plt.plot([0, tlegend], [1, 1], lw=2, color='k')
+        plt.ylim([-1, 1])
+        axes_legend.text(tlegend/2, -2, '%d s' % tlegend, verticalalignment='bottom', horizontalalignment='center')
+
+        plt.xlim((t[0], t[-1]))
+        sleepy._despine_axes(axes_legend)
+
+        axes_lbs = plt.axes([0.9, 0.1, 0.1, yrange])
+        for i in range(nunits):
+            if print_unit:
+                axes_lbs.text(0.05, i+0.25, ids[i] + ' ' + regions[i])
+            else:
+                axes_lbs.text(0.05, i+0.25, regions[i])
+        axes_lbs.set_xlim([0, 1])
+        axes_lbs.set_ylim(0, nunits)
+        sleepy._despine_axes(axes_lbs)
+        
+        plt.gcf().text(0.03,0.1+yrange/2, 'Firing rates (spikes/s)', rotation=90, verticalalignment='center')
+
+    else:
+        max_list = []
+        min_list = []
+        frm = fr.mean(axis=0)
+        fr = np.vstack((frm, fr))
+
+        for i in range(nunits+1):
+            a = fr[i,:]
+            max_list.append(a.max())
+            min_list.append(a.min())
+        
+        max_list = np.array(max_list)
+        min_list = np.array(min_list)
+
+        ax = plt.axes([0.1, 0.1, 0.8, yrange], sharex=axes_brs)
+
+        axes_lbs = plt.axes([0.9, 0.1, 0.1, yrange], sharey=ax)
+        axes_frs = plt.axes([0.01, 0.1, 0.082, yrange], sharey=ax)
+
+        mean_mx = np.zeros((fr.shape[0], 3))
+        for j in range(1, 4):
+            idx = np.where(M==j)[0]
+            mean_mx[:,j-1] = fr[:,idx].mean(axis=1)
+
+        offset = 0
+        for i in range(fr.shape[0]):
+            f = fr[i,:]
+            r = f - min_list[i]
+            r = r / (max_list[i] + np.abs(min_list[i]))            
+            ax.plot(t, r+offset)
+            offset += 1
+        ax.set_xlim([t[0], t[-1]])
+        ax.set_ylim(0, nunits+1)
+        #sleepy._despine_axes(ax)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["left"].set_visible(False)
+        ax.axes.get_yaxis().set_visible(False)
+        ax.set_xlabel('Time (s)')
+    
+        axes_frs.pcolorfast(mean_mx)
+        axes_frs.set_xticks([0.5,1.5,2.5])
+        axes_frs.set_xticklabels(['R', 'W', 'N'])
+        axes_frs.set_xlim([0, 3])
+        #axes_frs.set_ylim([0, fr.shape[0]])
+        sns.despine()
+    
+        offset = 0
+        ids = ['mean'] + ids
+        regions = [' '] + regions
+        for i in range(fr.shape[0]):
+            axes_lbs.text(0.05, offset, ids[i] + ' ' + regions[i], fontsize=8)
+            offset += 1
+        axes_lbs.set_xlim([0, 1])
+        axes_lbs.set_ylim([0, nunits+1])
+        sleepy._despine_axes(axes_lbs)
+
+
+
+
 def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[], 
                          tstart=0, tend=-1,
                          pzscore=True, nsmooth=0,
@@ -9190,4 +9504,11 @@ def calculate_lfp_spectrum(ppath, name, LFP, fres=0.5):
     
     return Pxx, f, t
 
+
+
+    
+    
+    
+    
+    
 
