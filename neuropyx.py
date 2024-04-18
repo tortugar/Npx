@@ -3867,7 +3867,7 @@ def plot_trajectories(PC, M, pre, post, istate=1, dt=2.5, ma_thr=10, ma_rem_exce
 
 def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, ax='', nrem2wake=False, nrem2wake_step=4,
                    pscatter=True, local_coord=False, outline_std=True, rem_onset=False, rem_offset=False,
-                   pre_win=30, post_win=30, rem_min_dur=0, break_out=True, break_in=False, prefr=False, scale=1.645):
+                   pre_win=30, post_win=0, rem_min_dur=0, break_out=True, break_in=False, prefr=False, scale=1.645):
     """
     Plot for each time point the population activity within the 2D state space spanned
     by PC[0,:] and PC[1,:]
@@ -3926,6 +3926,7 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
         with columns ['angle':first_angles, 'pc1':c1, 'pc2':c2, 'pc1_org':porg1, 'pc2_org':porg2]
 
     """        
+    bs_map = {'rem':[0, 1, 1], 'wake':[0.6, 0, 1], 'nrem':[0.8, 0.8, 0.8]}
     tidx = np.arange(0, len(M))
     # get the indices (in brainstate time) that we're going to completely discard:
     if len(kcuts) > 0:
@@ -3993,7 +3994,6 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
         
         else:        
             sns.kdeplot(x=C[:, 0], y=C[:, 1], ax=ax, color=clrs[s], fill=True, alpha=0.8, levels=[0.25, 0.5, 0.75, 1])
-
 
         # Add refractory period to state space
         if prefr:
@@ -4069,23 +4069,30 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
     sns.despine()
 
     # just the onset of REM as single dot:
-    rem_start = [s[0] for s in sleepy.get_sequences(np.where(M==1)[0]) if len(s)*dt >= rem_min_dur and s[0]*dt >= pre_win]    
+    ipre_win = int(pre_win/dt)
+    ipost_win = int(post_win/dt)
+    rem_start = [s[0] for s in sleepy.get_sequences(np.where(M==1)[0]) if len(s)*dt >= rem_min_dur and s[0]*dt >= pre_win and s[0]+ipost_win < len(M)]    
     if nrem2wake:
         rem_start = [s[0] for s in sleepy.get_sequences(np.where(M==2)[0]) if len(s)*dt >= rem_min_dur and s[0]*dt >= pre_win and M[s[0]-1]==3]    
         rem_start = rem_start[1::nrem2wake_step]
 
-    ipre_win = int(pre_win/dt)
+    # show trajectories for REM onset
     if rem_onset:
         for r in rem_start[:]:
-            plt.plot(PC[0,r], PC[1,r], 'c*')
+            if not nrem2wake:
+                plt.plot(PC[0,r], PC[1,r], '*', color=bs_map['rem'], markersize=10, zorder=3)
+            else:
+                plt.plot(PC[0,r], PC[1,r], '*', color=bs_map['wake'], markersize=10, zorder=3)
     
         for r in rem_start:
-            pc1, pc2 = PC[0,r-ipre_win:r+1], PC[1,r-ipre_win:r+1]
+            #pc1, pc2 = PC[0,r-ipre_win:r+1], PC[1,r-ipre_win:r+1]
+            # NEW - 04/17/24:
+            pc1, pc2 = PC[0,r-ipre_win:r+ipost_win+1], PC[1,r-ipre_win:r+ipost_win+1]            
             sm = _jet_plot(pc1, pc2, ax, lw=2, cmap='magma')
             
         cbar = plt.colorbar(sm, ax=ax, orientation='vertical', pad=0.05, shrink=0.6)  # pad adjusts the distance between the plot and colorbar
-        sm.set_clim(-pre_win, 0)
-        cbar.set_ticks([-pre_win, 0])
+        sm.set_clim(-pre_win, post_win)
+        cbar.set_ticks([-pre_win, post_win])
         cbar.set_label("Time (s)")
     
     if rem_offset:
@@ -4103,8 +4110,11 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
         rem_end = tmp
                 
         for r in rem_end:
-            pc1, pc2 = PC[0,r-ipre_win:r+ipost_win], PC[1,r-ipre_win:r+ipost_win]
+            pc1, pc2 = PC[0,r-ipre_win:r+ipost_win+1], PC[1,r-ipre_win:r+ipost_win+1]
             sm = _jet_plot(pc1, pc2, ax, lw=2, cmap='magma')
+            
+            plt.plot(PC[0,r+1], PC[1,r+1], '*', color=bs_map['wake'], markersize=10, zorder=3)
+
             
         cbar = plt.colorbar(sm, ax=ax, orientation='vertical', pad=0.05, shrink=0.6)  # pad adjusts the distance between the plot and colorbar
         sm.set_clim(-pre_win, post_win)
