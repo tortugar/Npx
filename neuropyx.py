@@ -4031,7 +4031,6 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
         if local_coord:
             idx = state_idx[3]
             C = PC[0:2,idx].T
-
             
             pca = PCA(n_components=2)
             pca.fit(C)            
@@ -6722,7 +6721,7 @@ def plot_firingrates(units, cell_info, ids, mouse,
                      config_file, tlegend=60, pzscore=True, 
                      kcuts=[], tstart=0, tend=-1,
                      pind_axes=True, dt=2.5, nsmooth=0, 
-                     pnorm_spec=False, box_filt=[], 
+                     pnorm_spec=False, box_filt=[], ma_thr=20, ma_rem_exception=True,
                      vm=[], fmax=20, print_unit=False, show_sigma=False):
     """
     Plot firing rates along with EEG spectrogram and hypnogram.
@@ -6784,6 +6783,19 @@ def plot_firingrates(units, cell_info, ids, mouse,
     M = sleepy.load_stateidx(ppath, file)[0]
     if len(M) > units.shape[0]:
         M = M[0:-1]
+    
+    # flatten out MAs #########################################################
+    if ma_thr>0:
+        seq = sleepy.get_sequences(np.where(M==2)[0])
+        for s in seq:
+            if np.round(len(s)*dt) <= ma_thr:
+                if ma_rem_exception:
+                    if (s[0]>1) and (M[s[0] - 1] != 1):
+                        M[s] = 3
+                else:
+                    M[s] = 3
+    ###########################################################################
+
     
     # brain regions corresponding to the unit IDs in @ids:
     regions = [cell_info[cell_info.ID == i].brain_region.iloc[0] for i in ids]
@@ -7015,7 +7027,7 @@ def plot_firingrates_withemg(units, cell_info, ids, mouse,
                      config_file, tlegend=60, pzscore=True, 
                      kcuts=[], tstart=0, tend=-1,
                      pind_axes=True, dt=2.5, nsmooth=0, 
-                     pnorm_spec=False, box_filt=[], 
+                     pnorm_spec=False, box_filt=[], ma_thr=20, ma_rem_exception=True,
                      vm=[], fmax=20, print_unit=False, show_sigma=False):
     """
     Plot firing rates along with EEG spectrogram, EMG amplitude, and hypnogram.
@@ -7078,6 +7090,18 @@ def plot_firingrates_withemg(units, cell_info, ids, mouse,
     M = sleepy.load_stateidx(ppath, file)[0]
     if len(M) > units.shape[0]:
         M = M[0:-1]
+        
+    # flatten out MAs #########################################################
+    if ma_thr>0:
+        seq = sleepy.get_sequences(np.where(M==2)[0])
+        for s in seq:
+            if np.round(len(s)*dt) <= ma_thr:
+                if ma_rem_exception:
+                    if (s[0]>1) and (M[s[0] - 1] != 1):
+                        M[s] = 3
+                else:
+                    M[s] = 3
+    ###########################################################################
     
     # brain regions corresponding to the unit IDs in @ids:
     regions = [cell_info[cell_info.ID == i].brain_region.iloc[0] for i in ids]
@@ -7324,6 +7348,169 @@ def plot_firingrates_withemg(units, cell_info, ids, mouse,
 
 
 
+def plot_firingrates_dff(units, cell_info, ids, mouse, config_file, kcuts=[], 
+                         tstart=0, tend=-1, ma_thr=20, ma_rem_exception=True,
+                         pzscore=True, nsmooth=0,
+                         pnorm_spec=False, box_filt=[], fmax=20, vm=[], dt=2.5, 
+                         tlegend=60):
+    dt = 2.5      
+    plt.figure(figsize=(10,10))
+    sleepy.set_fontarial()
+
+    if len(ids) == 0:        
+        ids = list(units.columns)    
+        ids = [unit for unit in ids if '_' in unit]
+
+    
+    path = load_config(config_file)[mouse]['SL_PATH']
+    ppath, file = os.path.split(path)
+    M = sleepy.load_stateidx(ppath, file)[0]
+    if len(M) > units.shape[0]:
+        M = M[0:-1]
+
+    # flatten out MAs #########################################################
+    if ma_thr>0:
+        seq = sleepy.get_sequences(np.where(M==2)[0])
+        for s in seq:
+            if np.round(len(s)*dt) <= ma_thr:
+                if ma_rem_exception:
+                    if (s[0]>1) and (M[s[0] - 1] != 1):
+                        M[s] = 3
+                else:
+                    M[s] = 3
+    ###########################################################################
+
+    
+    # brain regions corresponding to the unit IDs in @ids:
+    regions = [cell_info[cell_info.ID == i].brain_region.iloc[0] for i in ids]
+    
+    tmp = so.loadmat(os.path.join(ppath, file, 'sp_%s.mat'%file), squeeze_me=True)
+    SP = tmp['SP']
+    freq = tmp['freq']
+    ifreq = np.where(freq <= fmax)[0]
+    
+    if len(box_filt) > 0:
+        filt = np.ones(box_filt)
+        filt = np.divide(filt, filt.sum())
+        SP = scipy.signal.convolve2d(SP, filt, boundary='symm', mode='same')
+    
+    if pnorm_spec:
+        sp_mean = SP.mean(axis=1)
+        SP = np.divide(SP, np.tile(sp_mean, (SP.shape[1], 1)).T)
+    
+        
+    # cut out kcuts: ###############
+    tidx = kcut_idx(M, units, kcuts, dt=dt)
+    M = M[tidx]
+    units = units.iloc[tidx,:]
+    SP = SP[:,tidx]
+    ################################
+    
+    # set istart and iend
+    if tend == -1:
+        iend = len(M)
+    else:
+        iend = int(np.round(tend/dt))
+    istart = int(np.round(tstart/dt))         
+    
+    M = M[istart:iend]
+    # NOTE units.loc[i:j,:] INCLUDES the j-th element, 
+    # that's different from how np.arrays behave
+
+    units = units.iloc[istart:iend,:]
+    SP = SP[:,istart:iend]
+    
+    nunits = len(ids)
+    ntime = units.shape[0]
+    fr = np.array(units[ids]).T
+
+    if nsmooth > 0:
+        for i in range(fr.shape[0]):
+            fr[i,:] = sleepy.smooth_data(fr[i,:], nsmooth)
+    if pzscore:
+        for i in range(fr.shape[0]):
+            fr[i,:] = (fr[i,:] - fr[i,:].mean()) / fr[i,:].std()
+    
+    nhypno = np.min((len(M), ntime))
+    M = M[0:nhypno]
+    
+    
+    t = np.arange(0, len(M))*dt        
+    # Axes for hypnogram
+    xrange = 0.7
+    axes_brs = plt.axes([0.1, 0.95, xrange, 0.03])
+    
+    cmap = plt.cm.jet
+    my_map = cmap.from_list('brs', [[0, 0, 0], [0, 1, 1], [0.6, 0, 1], [0.8, 0.8, 0.8]], 4)
+    tmp = axes_brs.pcolorfast(t, [0, 1], np.array([M]), vmin=0, vmax=3)
+    tmp.set_cmap(my_map)
+    axes_brs.axis('tight')
+    axes_brs.axes.get_xaxis().set_visible(False)
+    axes_brs.axes.get_yaxis().set_visible(False)
+    axes_brs.spines["top"].set_visible(False)
+    axes_brs.spines["right"].set_visible(False)
+    axes_brs.spines["bottom"].set_visible(False)
+    axes_brs.spines["left"].set_visible(False)
+
+    # plot spectrogram
+    # calculate median for choosing right saturation for heatmap
+    med = np.median(SP.max(axis=0))
+    if len(vm) == 0:
+        vm = [0, med*2.0]    
+    # axes for specrogram 
+    axes_spec = plt.axes([0.1, 0.85, xrange, 0.08], sharex=axes_brs)    
+    # axes for colorbar
+    axes_cbar = plt.axes([0.8, 0.85, 0.05, 0.08])
+
+    im = axes_spec.pcolorfast(t, freq[ifreq], SP[ifreq,:], vmin=vm[0], vmax=vm[1], cmap='jet')
+    sleepy.box_off(axes_spec)
+    axes_spec.axes.get_xaxis().set_visible(False)
+    axes_spec.spines["bottom"].set_visible(False)
+    axes_spec.set_ylabel('Freq. (Hz)')
+    
+    # colorbar for EEG spectrogram
+    cb = plt.colorbar(im, ax=axes_cbar, pad=0.0, aspect=10.0, location='right')
+    if pnorm_spec:
+        #cb.set_label('Norm. power')
+        cb.set_label('')
+    else:
+        cb.set_label('Power ($\mathrm{\mu}$V$^2$s)')
+    axes_cbar.set_alpha(0.0)
+    sleepy._despine_axes(axes_cbar)
+    
+    t = np.arange(0, len(M))*dt
+    yrange = 0.73
+    # axes for firing rates
+    ax_fr = plt.axes([0.1, 0.1, xrange, yrange], sharex=axes_brs)
+    
+    
+    fmax = fr.max()
+    for i,ID in enumerate(ids):
+
+        ax_fr.plot(t, fr[i]+i*fmax, color='k')
+        #plt.text(10, i*fmax+fmax/4, str(i), fontsize=14, color=cmap[i,:],bbox=dict(facecolor='w', alpha=0.))
+
+    sleepy._despine_axes(ax_fr)
+    plt.ylim([-fmax, fmax*len(ids)])
+
+
+    ax_tlegend = plt.axes([0.1, 0.05, xrange, 0.05], sharex=axes_brs)
+    ax_tlegend.plot([0, tlegend], [0,0], color='k')
+    ax_tlegend.text(tlegend/2, -2, '%d s' % tlegend, verticalalignment='bottom', horizontalalignment='center')
+    sleepy._despine_axes(ax_tlegend)
+    plt.ylim([-1, 1])
+
+    plt.xlim((t[0], t[-1]))
+
+    
+    ax_ulegend = plt.axes([0.05, 0.1, 0.05, yrange])
+    plt.ylim([-fmax, fmax*len(ids)])
+    plt.xlim([-1, 1])
+    plt.plot([0, 0], [0, 5], color='black')
+    sleepy._despine_axes(ax_ulegend)
+    
+
+
 
 def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[], 
                          tstart=0, tend=-1,
@@ -7376,7 +7563,6 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
     M = sleepy.load_stateidx(ppath, file)[0]
     if len(M) > units.shape[0]:
         M = M[0:-1]
-
 
     
     # brain regions corresponding to the unit IDs in @ids:
