@@ -757,8 +757,13 @@ def sort_xcorr_byregion(type1, type2, corr_frame, unit_info):
 
 def fr_transitions(units, M, unit_info, transitions, pre, post, si_threshold, sj_threshold, 
                    ma_thr=10, ma_rem_exception=False, sdt=2.5, pzscore=True, sf=0, ma_mode=False, 
-                   attributes=[], kcuts=[]):
+                   attributes=[], kcuts=[], 
+                   pspec=False, fmax=20, spe_filt=[], mouse='', config_file='mouse_config.txt'):
     """
+    
+    
+    Note: If you like to also calculate the average EEG specotrogram for each transition and unit,
+    set $psec=True, set the $mouse name and select the right $config_file
     
 
     Parameters
@@ -795,6 +800,15 @@ def fr_transitions(units, M, unit_info, transitions, pre, post, si_threshold, sj
         Allows you to transfer columns in DataFrame $unit_info to the returned DataFrame. The default is [].
     kcuts : TYPE, optional
         DESCRIPTION. The default is [].
+    pspect : bool
+        if True, also claculate EEG spectrogram
+    mouse : str,
+        If $pspec == True, needs to be set to an existing
+        mouse name
+    config_file : str
+        Name of mouse recording configuration file
+    fmax : float
+        Maximum frequency for EEG spectrogram
 
     Returns
     -------
@@ -835,6 +849,38 @@ def fr_transitions(units, M, unit_info, transitions, pre, post, si_threshold, sj
                         M[s] = 4
                     else:
                         M[s] = 3    
+
+    # NEW: load spectrogram
+    # load spectrogram and normalize
+    if pspec:
+        path = load_config(config_file)[mouse]['SL_PATH']
+        ppath, name = os.path.split(path)
+
+        
+        P = so.loadmat(os.path.join(ppath, name, 'sp_%s.mat' % name), squeeze_me=True)
+        SP = P['SP']
+        freq = P['freq']
+        ifreq = np.where(freq <= fmax)[0]
+        
+        if len(spe_filt) > 0:
+            filt = np.ones(spe_filt)
+            filt = np.divide(filt, filt.sum())
+            SP = scipy.signal.convolve2d(SP, filt, boundary='symm', mode='same')            
+            
+        sp_mean = SP.mean(axis=1)
+        SP = np.divide(SP, np.tile(sp_mean, (SP.shape[1], 1)).T)
+        SP[:,tidx]
+        
+        
+        
+        unit_transspe = {}
+        mx_transspe = {}
+        for (si,sj) in transitions:
+            # string label for type of transition:
+            sid = states[si] + states[sj]
+            unit_transspe[sid] = {r:[] for r in unitIDs}
+            mx_transspe[sid] = np.zeros((len(ifreq), len(t), len(unitIDs)))        
+    ##########################################################################
 
     data = []
     for unit in unitIDs:
@@ -877,10 +923,14 @@ def fr_transitions(units, M, unit_info, transitions, pre, post, si_threshold, sj
                         # i = 10, ipre = 2, ipost = 2
                         # 8,9,10
                         # np.arange(8,12) = 8,9,10,11,12
-                        
-                        #spe_si = SP[ifreq,ti-ipre+1:ti+1]
-                        #spe_sj = SP[ifreq,ti+1:ti+ipost+1]
-                        #spe = np.concatenate((spe_si, spe_sj), axis=1)
+
+                        if pspec:                        
+                            #spe_si = SP[ifreq,ti-ipre+1:ti+1]
+                            #spe_sj = SP[ifreq,ti+1:ti+ipost+1]
+                            #spe = np.concatenate((spe_si, spe_sj), axis=1)
+                            spe = SP[ifreq, ti-ipre+1:ti+ipost+1]                            
+                            unit_transspe[sid][unit].append(spe)
+                            
                         #spm_si = emg_ampl[ti-ipre+1:ti+1]
                         #spm_sj = emg_ampl[ti+1:ti+ipost+1]
                         #spm = np.concatenate((spm_si, spm_sj))
@@ -893,11 +943,22 @@ def fr_transitions(units, M, unit_info, transitions, pre, post, si_threshold, sj
 
     df = pd.DataFrame(data=data, columns=['ID', 'time', 'fr', 'trans'] + attributes)
 
-    return df
+    if pspec:
+        for (si,sj) in transitions:
+            for i,unit in enumerate(unitIDs):
+                # string label for type of transition:
+                sid = states[si] + states[sj]
+                tmp = np.array(unit_transspe[sid][unit])
+                mx_transspe[sid][:,:,i] = np.nanmean(tmp, axis=0)
+            
+    if not pspec:
+        return df, []
+    else:
+        return df, mx_transspe
 
 
 
-def fr_transitions_stats(df_trans, base_int, unit_avg=True, dt=2.5):
+def fr_transitions_stats(df_trans, base_int, unit_avg=True, dt=2.5, time_mode='midpoint'):
     
     # test if df has column ms_id
 
@@ -946,12 +1007,14 @@ def fr_transitions_stats(df_trans, base_int, unit_avg=True, dt=2.5):
             sig = 'no'
             if p.pvalue < (0.05 / (nbin-1)):
                 sig = 'yes'
-            tpoint = i*(ibin*dt)+tinit + ibin*dt/2
+            if time_mode == 'midpoint':
+                tpoint = i*(ibin*dt)+tinit + ibin*dt/2
+            else:
+                tpoint = i*(ibin*dt)+tinit + ibin*dt
             tpoint = float('%.2f'%tpoint)
             
             data.append([tpoint, p.pvalue, sig, tr])
     df_stats = pd.DataFrame(data = data, columns = ['time', 'p-value', 'sig', 'trans'])
-    print(df_stats)
 
     return df_stats
 
@@ -4711,8 +4774,7 @@ def rem_prepost(units, M, pzscore=True,  ma_thr=20, ma_rem_exception=True, kcuts
 
 def remrem_sections(units, cell_info, M, nsections=5, nsections_rem=0, nsmooth=0, pzscore=False, kcuts=[], 
                     irem_dur=120, refractory_rule=False, wake_prop_threshold=0.5, ma_thr=10, ma_rem_exception=False, 
-                    border=0, linreg_cut=0,
-                    nan_check=False):
+                    border=0, linreg_cut=0, nan_check=False):
     """
     Calculate the everage NREM and Wake activity during consecutive sections of the
     inter-REM interval for each single unit and then perform regression analysis to test whether 
@@ -4753,7 +4815,7 @@ def remrem_sections(units, cell_info, M, nsections=5, nsections_rem=0, nsmooth=0
         normalized firing rate vector for linear regression analysis that goes into
         df_stats
     nan_check: bool, optional
-        If True, 
+        If True, exclude trials (inter-REM intervals) that include nan.
 
     Returns
     -------
@@ -8368,11 +8430,8 @@ def pc_infraslow(PC, M, mouse, kcuts=(), dt=2.5, nsmooth=0, ma_thr=20,
     path = load_config(config_file)[mouse]['SL_PATH']
     ppath, file = os.path.split(path)
     #M = sleepy.load_stateidx(ppath, file)[0]
-
     min_dur = np.max([win*2.5, min_dur])
 
-
-    
     # load frequency band
     P = so.loadmat(os.path.join(ppath, file,  'sp_' + file + '.mat'))
     if not peeg2:
@@ -8755,7 +8814,6 @@ def is_cycle(mouse, units, band, ids=[], mouse_config='mouse_config.txt',
     isigma = np.where((freq>=band[0])&(freq<=band[1]))[0]
     SPEEG = SPEEG[:,0:nhypno]    
     SPEEG_orig = SPEEG.copy()
-
 
     if filt_speeg:
         filt = np.ones(box_filt)
@@ -9702,6 +9760,15 @@ def calculate_lfp_spectrum(ppath, name, LFP, fres=0.5):
 
 
 
+    
+#def write_stats(file='', flag='', figure='', group_analysis='', group_statistic='', group_pvalue='', group_effsize='', 
+#                comparisons='', pw_tests='', pw_statistic='', pw_pvalue='', pw_effsize='', tail='', sample_size='', subjects=''):
+    
+#    df = pd.read_csv(file)
+    
+
+# def write_stats(res, file='', flag='', figure='', test='pg_ttest')
+    
     
     
     
