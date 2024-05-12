@@ -1691,6 +1691,8 @@ def sleep_components(units, M, wake_dur=600, wake_break=60, ndim=3, nsmooth=0,
         R[i,:] = R[i,:] - R[i,idx].mean()
     
     # SVD
+    # Note that each column is a neuron, 
+    # and each row is a time point
     U,S,Vh = scipy.linalg.svd(Y)
     
     # each row in Vh is an eigenvector of the COV matrix:    
@@ -2990,7 +2992,7 @@ def pc_reconstruction2(units, cell_info, time_idx=[], ndim=3, nsmooth=0, detrend
 
     Note on SVD:
     Assume Y is a matrix with each column corresponding to the firing rate vector
-    of one recorded unit (Y ~ time bins x unit).
+    of one recorded unit (Y ~ time bins x units).
     Assume
         U,S,Vh = scipy.linalg.svd(Y)
     is the SVD of matrix Y
@@ -3027,7 +3029,9 @@ def pc_reconstruction2(units, cell_info, time_idx=[], ndim=3, nsmooth=0, detrend
     sign_plot: bool
         It True, plot PCs after multiplying with pc_sign
     pearson: bool
-        If True, calculate pearson correlation between each PC and firing rate
+        If True, calculate pearson correlation between each PC and firing rate. 
+        The r value and p value are reported in the returned DataFrame df;
+        columns r1, r2,... and p1, p2, ...
 
     Returns
     -------
@@ -3428,6 +3432,7 @@ def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], min_laser=20, pzscore
                            switches to a different state
         'valz': PC values during laser trial, for each trial the PC vector
                 is z-scored.
+        'rem_delay': Delay from laser to REM onset; if there's no REM the value is set to -1
 
     """
     dt = 2.5
@@ -3929,7 +3934,7 @@ def plot_trajectories(PC, M, pre, post, istate=1, dt=2.5, ma_thr=10, ma_rem_exce
 
 
 def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, ax='', nrem2wake=False, nrem2wake_step=4,
-                   pscatter=True, local_coord=False, outline_std=True, rem_onset=False, rem_offset=False,
+                   pscatter=True, local_coord=False, outline_std=True, rem_onset=False, rem_offset=False, show_avgtraj=False,
                    pre_win=30, post_win=0, rem_min_dur=0, break_out=True, break_in=False, prefr=False, scale=1.645):
     """
     Plot for each time point the population activity within the 2D state space spanned
@@ -3956,15 +3961,18 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
     nrem2wake_step: int, optional
         Show every nrem2wake_step-th NREM->Wake transition; otherwise
         it gets too clusttered
-    pscatter : TYPE, optional
+    pscatter : bool, optional
         DESCRIPTION. The default is True.
     local_coord : TYPE, optional
         DESCRIPTION. The default is False.
     outline_std : bool
         If True, draw outline of one std using an ellipse;
         if False, use sns.kdeplot to draw outline of data spread
-    rem_onset: bool
+    rem_onset : bool
         If True, color-code the REM onset and the preceding $pre_win seconds 
+    show_avgtraj : bool
+        If True, show average across all trajectories instead of each individual
+        trajectory
     rem_mindur: float
         Only REM episodes >= rem_mindur are considered
     break_out: bool
@@ -3979,7 +3987,6 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
         Scale = 1.96 outlines 95% of the distribution
         scale = 1.28 comprises 90% of the distribution.
         
-
     Returns
     -------
     ax : plt.axes
@@ -4140,17 +4147,28 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
 
     # show trajectories for REM onset
     if rem_onset:
-        for r in rem_start[:]:
-            if not nrem2wake:
-                plt.plot(PC[0,r], PC[1,r], '*', color=bs_map['rem'], markersize=10, zorder=3)
-            else:
-                plt.plot(PC[0,r], PC[1,r], '*', color=bs_map['wake'], markersize=10, zorder=3)
-    
-        for r in rem_start:
-            #pc1, pc2 = PC[0,r-ipre_win:r+1], PC[1,r-ipre_win:r+1]
-            # NEW - 04/17/24:
-            pc1, pc2 = PC[0,r-ipre_win:r+ipost_win+1], PC[1,r-ipre_win:r+ipost_win+1]            
+        if not show_avgtraj:
+            for r in rem_start[:]:
+                if not nrem2wake:
+                    plt.plot(PC[0,r], PC[1,r], '*', color=bs_map['rem'], markersize=10, zorder=3)
+                else:
+                    plt.plot(PC[0,r], PC[1,r], '*', color=bs_map['wake'], markersize=10, zorder=3)
+        
+            for r in rem_start:
+                # NEW - 04/17/24:
+                pc1, pc2 = PC[0,r-ipre_win:r+ipost_win+1], PC[1,r-ipre_win:r+ipost_win+1]            
+                sm = _jet_plot(pc1, pc2, ax, lw=2, cmap='magma')
+        else:
+            tmp1, tmp2 = [], []
+            for r in rem_start:
+                pc1, pc2 = PC[0,r-ipre_win:r+ipost_win+1], PC[1,r-ipre_win:r+ipost_win+1]            
+                tmp1.append(pc1)
+                tmp2.append(pc2)
+            
+            pc1 = np.array(tmp1).mean(axis=0)
+            pc2 = np.array(tmp2).mean(axis=0)
             sm = _jet_plot(pc1, pc2, ax, lw=2, cmap='magma')
+            
             
         cbar = plt.colorbar(sm, ax=ax, orientation='vertical', pad=0.05, shrink=0.6)  # pad adjusts the distance between the plot and colorbar
         sm.set_clim(-pre_win, post_win)
@@ -9014,7 +9032,6 @@ def laser_triggered_train(ppath, name, train, pre, post, nbin=1, offs=0, iters=1
     fr_post = []
     for (i,j) in zip(idxs[offs::iters], idxe[offs::iters]):
         if (i - pre >= 0) and (i + post < len_train):
-
 
             raster.append(train[i - pre:i + post + 1])
             fr_pre.append(train[i-pre:i].mean())
