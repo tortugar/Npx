@@ -2391,7 +2391,7 @@ def sleep_subspaces(units, mouse, ndim=2, nsmooth=0, ma_thr=10, ma_rem_exception
         M = M[tidx]
         nhypno = len(tidx)
     ###########################################################################    
-    print(len(tidx))
+    #print(len(tidx))
     
     nsample = nhypno           # number of time points
     nvar    = len(unitIDs)     # number of units
@@ -3675,7 +3675,8 @@ def laser_triggered_frs(units, pre, post, mouse, kcuts=[], ma_thr=10, ma_rem_exc
     ddir = load_config(config_file)[mouse]['SL_PATH']
     ppath, name = os.path.split(ddir)
     M = sleepy.load_stateidx(ppath, name)[0]
-    nhypno = M.shape[0]
+
+    nhypno = M.shape[0]-1
     ndim = units.shape[1]
     tidx = np.arange(0, nhypno)
     
@@ -3866,7 +3867,7 @@ def plot_trajectories(PC, M, pre, post, istate=1, dt=2.5, ma_thr=10, ma_rem_exce
             sj = s[-1]
             
             if si-ipre > 0 and sj+ipost < nhypno and len(s)*dt > min_dur and M[si-1]==pre_state:
-                print(len(s)*dt)
+                #print(len(s)*dt)
                 mcut = M[si-ipre:sj+ipost]
                 
                 k = si-ipre
@@ -7205,7 +7206,7 @@ def plot_firingrates_withemg(units, cell_info, ids, mouse,
     SPEMG = tmp['mSP']
     i_mu = np.where((freq >= r_mu[0]) & (freq <= r_mu[1]))[0]
     p_mu = np.sqrt(SPEMG[i_mu, :].sum(axis=0) * (freq[1] - freq[0])) #* 1000.0 # back to muV
-
+    # END[load EMG]
 
 
     # cut out kcuts: ###############
@@ -7283,10 +7284,9 @@ def plot_firingrates_withemg(units, cell_info, ids, mouse,
     axes_cbar.set_alpha(0.0)
     sleepy._despine_axes(axes_cbar)
     
-    # EMG amplitude
+    # Show EMG amplitude
     axes_emg = plt.axes([0.1, 0.75+0.02, 0.8, 0.06], sharex=axes_brs)
-    axes_emg.plot(t, p_mu[istart:iend], color='black')
-    
+    axes_emg.plot(t, p_mu[istart:iend], color='black')    
     sleepy.box_off(axes_emg)
     axes_emg.patch.set_alpha(0.0)
     axes_emg.spines["bottom"].set_visible(False)
@@ -7595,16 +7595,17 @@ def plot_firingrates_dff(units, cell_info, ids, mouse, config_file, kcuts=[],
 def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[], 
                          tstart=0, tend=-1,
                          pzscore=True, nsmooth=0,
-                         pnorm_spec=False, box_filt=[], fmax=20, vm=[], dt=2.5, 
-                         vm_fr=[]):
+                         pnorm_spec=False, box_filt=[], fmax=20, r_mu=[10,100],
+                         vm=[], dt=2.5, tlegend=300,
+                         vm_fr=[], pregion=False):
     """
     See also &plot_firingrates() and &plot_firingrates_map()
     Plot firing rates of selected units as heamtp
 
     Parameters
     ----------
-    units : TYPE
-        DESCRIPTION.
+    units : pd.DataFrame
+        Unit DataFrame; wich each column corresponding to one unit.
     cell_info : TYPE
         DESCRIPTION.
     ids : TYPE
@@ -7619,10 +7620,12 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
         DESCRIPTION. The default is True.
     pnorm_spec : TYPE, optional
         DESCRIPTION. The default is False.
-    box_filt : TYPE, optional
-        DESCRIPTION. The default is [].
+    box_filt : tuple or two element list, optional
+        Filter EEG spectrogram using box filder . If [], no filtering is applied.
     fmax : TYPE, optional
         DESCRIPTION. The default is 20.
+    pregion : bool
+        If True, color code different brain regions using color bar on the right
 
     Returns
     -------
@@ -7636,22 +7639,29 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
     if len(ids) == 0:        
         ids = list(units.columns)    
         ids = [unit for unit in ids if '_' in unit]
-
     
     path = load_config(config_file)[mouse]['SL_PATH']
     ppath, file = os.path.split(path)
     M = sleepy.load_stateidx(ppath, file)[0]
     if len(M) > units.shape[0]:
         M = M[0:-1]
-
     
     # brain regions corresponding to the unit IDs in @ids:
-    regions = [cell_info[cell_info.ID == i].brain_region.iloc[0] for i in ids]
+    if pregion:
+        regions = [cell_info[cell_info.ID == i].brain_region.iloc[0] for i in ids]
     
     tmp = so.loadmat(os.path.join(ppath, file, 'sp_%s.mat'%file), squeeze_me=True)
     SP = tmp['SP']
     freq = tmp['freq']
     ifreq = np.where(freq <= fmax)[0]
+    
+    # load EMG
+    tmp = so.loadmat(os.path.join(ppath, file, 'msp_%s.mat' % file), squeeze_me=True)
+    SPEMG = tmp['mSP']
+    i_mu = np.where((freq >= r_mu[0]) & (freq <= r_mu[1]))[0]
+    p_mu = np.sqrt(SPEMG[i_mu, :].sum(axis=0) * (freq[1] - freq[0])) #* 1000.0 # back to muV
+    # END[load EMG]
+
     
     if len(box_filt) > 0:
         filt = np.ones(box_filt)
@@ -7661,7 +7671,6 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
     if pnorm_spec:
         sp_mean = SP.mean(axis=1)
         SP = np.divide(SP, np.tile(sp_mean, (SP.shape[1], 1)).T)
-    
         
     # cut out kcuts: ###############
     tidx = kcut_idx(M, units, kcuts, dt=dt)
@@ -7730,22 +7739,31 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
     sleepy.box_off(axes_spec)
     axes_spec.axes.get_xaxis().set_visible(False)
     axes_spec.spines["bottom"].set_visible(False)
-    axes_spec.set_ylabel('Freq. (Hz)')
-    
+    axes_spec.set_ylabel('Freq.\n(Hz)')
+    print('bla')
     # colorbar for EEG spectrogram
     cb = plt.colorbar(im, ax=axes_cbar, pad=0.0, aspect=10.0, location='right')
     if pnorm_spec:
-        #cb.set_label('Norm. power')
-        cb.set_label('')
+        cb.set_label('Norm. power')
+        #cb.set_label('')
     else:
         cb.set_label('Power ($\mathrm{\mu}$V$^2$s)')
     axes_cbar.set_alpha(0.0)
     sleepy._despine_axes(axes_cbar)
-    
+        
+    # Show EMG amplitude
+    axes_emg = plt.axes([0.1, 0.79, xrange, 0.05], sharex=axes_brs)
+    axes_emg.plot(t, p_mu[istart:iend], color='black')    
+    sleepy.box_off(axes_emg)
+    axes_emg.patch.set_alpha(0.0)
+    axes_emg.spines["bottom"].set_visible(False)
+    axes_emg.set_xticks([])
+    axes_emg.set_ylabel('EMG\n($\mathrm{\mu}$V)')
+    # END[Show EMG amplitude]
 
-    yrange = 0.73
-    # axes for firing rates
-    ax_fr = plt.axes([0.1, 0.1, xrange, yrange], sharex=axes_brs)
+    # axes for firing rates    
+    yrange = 0.68+0.05
+    ax_fr = plt.axes([0.1, 0.05, xrange, yrange], sharex=axes_brs)
     ax_cbfr = plt.axes([0.85, 0.1+yrange*0.5, 0.05, yrange*0.5])
 
     if len(vm_fr) == 0:
@@ -7756,49 +7774,53 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
     t = np.arange(0, len(M))*dt
     im = ax_fr.pcolorfast(t, y, fr, vmin=vm_fr[0], vmax=vm_fr[1], cmap='magma')
     sleepy.box_off(ax_fr)
-    ax_fr.set_xlabel('Time (s)')
+    #ax_fr.set_xlabel('Time (s)')
     ax_fr.set_ylabel('Unit no.')    
     cb = plt.colorbar(im, ax=ax_cbfr, pad=0.0, aspect=10.0, location='right')
     sleepy._despine_axes(ax_cbfr)
 
-    # build region map
-    regions = list(cell_info[cell_info.ID.isin(ids)].brain_region.unique())
-    #regions.sort()
-    clrs = sns.color_palette('Set2', len(regions))
-
-    reg2int = {r:i for r,i in zip(regions, range(len(regions)))}
+    # Axes for time legend
+    axes_time = plt.axes([0.1, 0.02, xrange, 0.02], sharex=axes_brs)
+    axes_time.set_xlim([t[0], t[-1]])
+    plt.plot([0,tlegend], [0,0], 'k')
+    plt.text(0, -2, '%s s' % str(tlegend))
+    plt.ylim([-1, 1])
+    sleepy._despine_axes(axes_time)
     
-    cmap = plt.matplotlib.colors.ListedColormap(clrs)
-
-
-    reg_code = np.zeros((nunits,))
-    for i,ID in enumerate(ids):
-        region = cell_info[cell_info.ID == ID]['brain_region'].item()        
-        reg_code[i] = reg2int[region]
-
-
-    # Axes for brain region colorcode 
-    ax_rg = plt.axes([0.82, 0.1, 0.02, yrange])
-    A = np.zeros([nunits,1])
-    A[:,0] = reg_code
-    ax_rg.pcolorfast(A, cmap=cmap)
-    sleepy._despine_axes(ax_rg)
-
+    reg_code = []
+    if pregion:
+        # build region map
+        regions = list(cell_info[cell_info.ID.isin(ids)].brain_region.unique())
+        #regions.sort()
+        clrs = sns.color_palette('Set2', len(regions))
     
-    # Add axes for brain region legends
-    ax_lb = plt.axes([0.85, 0.1, 0.1, yrange*0.25])
-    for k in reg2int:
-        i = reg2int[k]
-        ax_lb.plot([0.5, 1], [i,i], color=clrs[i], lw=2)
-        ax_lb.text(1.5, i, k, va='center')
+        reg2int = {r:i for r,i in zip(regions, range(len(regions)))}
         
-    ax_lb.set_ylim([-1, len(regions)])
-    ax_lb.set_xlim([0, 2])
-    
-    sleepy._despine_axes(ax_lb)
-    
-    
-    print(reg2int)
+        cmap = plt.matplotlib.colors.ListedColormap(clrs)
+            
+        reg_code = np.zeros((nunits,))
+        for i,ID in enumerate(ids):
+            region = cell_info[cell_info.ID == ID]['brain_region'].item()        
+            reg_code[i] = reg2int[region]
+        
+        # Axes for brain region colorcode 
+        ax_rg = plt.axes([0.82, 0.1, 0.02, yrange])
+        A = np.zeros([nunits,1])
+        A[:,0] = reg_code
+        ax_rg.pcolorfast(A, cmap=cmap)
+        sleepy._despine_axes(ax_rg)
+            
+        # Add axes for brain region legends
+        ax_lb = plt.axes([0.85, 0.1, 0.1, yrange*0.25])
+        for k in reg2int:
+            i = reg2int[k]
+            ax_lb.plot([0.5, 1], [i,i], color=clrs[i], lw=2)
+            ax_lb.text(1.5, i, k, va='center')
+            
+        ax_lb.set_ylim([-1, len(regions)])
+        ax_lb.set_xlim([0, 2])        
+        sleepy._despine_axes(ax_lb)
+                        
     return reg_code
 
 
