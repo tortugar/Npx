@@ -1022,9 +1022,10 @@ def fr_transitions_stats(df_trans, base_int, unit_avg=True, dt=2.5, time_mode='m
 
 def pc_transitions(PC, M, transitions, pre, post, si_threshold, sj_threshold, 
                    ma_thr=10, ma_rem_exception=False, sdt=2.5, ma_mode=False, 
-                   kcuts=[], allowed_idx=[]):
+                   kcuts=[], allowed_idx=[], pzscore_pc=False):
     """
-    
+    Calculate timecourse of PCs in population activity relative to brain state 
+    transitions
 
     Parameters
     ----------
@@ -1057,11 +1058,13 @@ def pc_transitions(PC, M, transitions, pre, post, si_threshold, sj_threshold,
         DESCRIPTION. The default is [].
     allowed_idx : TYPE, optional
         DESCRIPTION. The default is [].
+    pzscore_pc : bool
+        If True, z-score PCs across entire recording
 
     Returns
     -------
-    df : TYPE
-        DESCRIPTION.
+    df : pd.DataFrame
+        with columns ['event', 'pc', 'time', 'fr', 'trans'].
 
     """
 
@@ -1103,6 +1106,12 @@ def pc_transitions(PC, M, transitions, pre, post, si_threshold, sj_threshold,
 
     if len(allowed_idx) == 0:
         allowed_idx = range(0, len(M))
+
+    # zscore pcs: #############################################################
+    if pzscore_pc:
+        for i in range(PC.shape[0]):
+            PC[i,:] = (PC[i,:]- PC[i,:].mean()) / PC[i,:].std()
+    ###########################################################################
 
     data = []
     ev = 0
@@ -1273,9 +1282,6 @@ def pc_transitions_laser(mouse, PC, M, transitions, pre, post, si_threshold, sj_
     
     sr = sleepy.get_snr(ppath, name)
     nbin = int(np.round(sr)*dt)
-
-
-
     lsr = so.loadmat(os.path.join(ddir, 'laser_%s.mat' % name), squeeze_me=True)['laser']
 
     idxs, idxe = sleepy.laser_start_end(lsr)
