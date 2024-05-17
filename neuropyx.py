@@ -7596,7 +7596,7 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
                          tstart=0, tend=-1, ma_thr=20, ma_rem_exception=True,
                          pzscore=True, nsmooth=0,
                          pnorm_spec=False, box_filt=[], fmax=20, r_mu=[10,100],
-                         vm=[], dt=2.5, tlegend=300,
+                         vm=[], cb_ticks=[], dt=2.5, tlegend=300,
                          vm_fr=[], pregion=False):
     """
     See also &plot_firingrates() and &plot_firingrates_map()
@@ -7610,10 +7610,10 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
         DESCRIPTION.
     ids : TYPE
         DESCRIPTION.
-    mouse : TYPE
-        DESCRIPTION.
-    config_file : TYPE
-        DESCRIPTION.
+    mouse : str
+        mouse name.
+    config_file : str
+        file name of the mouse configuration file.
     kcuts : TYPE, optional
         DESCRIPTION. The default is [].
     tstart: float,
@@ -7633,6 +7633,13 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
         Filter EEG spectrogram using box filder . If [], no filtering is applied.
     fmax : TYPE, optional
         DESCRIPTION. The default is 20.
+    vm : tuple
+        lower and upper range color color range for EEG spectrogram colormap.
+        If vm==[], the colorange is set automatically
+    cb_ticks: list
+        Ticks on the colorbar. If you set cb_ticks = vm, then only the upper
+        and lower range of the colorbar are set as ticks. 
+        If empty, set ticks automatically.
     pregion : bool
         If True, color code different brain regions using color bar on the right
 
@@ -7766,9 +7773,10 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
     cb = plt.colorbar(im, ax=axes_cbar, pad=0.0, aspect=10.0, location='right')
     if pnorm_spec:
         cb.set_label('Norm. power')
-        #cb.set_label('')
     else:
         cb.set_label('Power ($\mathrm{\mu}$V$^2$s)')
+    if len(cb_ticks) > 0:
+        cb.set_ticks(cb_ticks)        
     axes_cbar.set_alpha(0.0)
     sleepy._despine_axes(axes_cbar)
         
