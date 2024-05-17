@@ -7773,7 +7773,7 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
     if pnorm_spec:
         cb.set_label('Norm. power')
     else:
-        cb.set_label('Power ($\mathrm{\mu}$V$^2$s)')
+        cb.set_label('Power ($\mathrm{\mu}$V$^2$/Hz)')
     if len(cb_ticks) > 0:
         cb.set_ticks(cb_ticks)        
     axes_cbar.set_alpha(0.0)
