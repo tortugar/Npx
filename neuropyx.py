@@ -7768,7 +7768,6 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
     axes_spec.axes.get_xaxis().set_visible(False)
     axes_spec.spines["bottom"].set_visible(False)
     axes_spec.set_ylabel('Freq.\n(Hz)')
-    print('bla')
     # colorbar for EEG spectrogram
     cb = plt.colorbar(im, ax=axes_cbar, pad=0.0, aspect=10.0, location='right')
     if pnorm_spec:
@@ -7781,6 +7780,7 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
     sleepy._despine_axes(axes_cbar)
         
     # Show EMG amplitude
+    # Axes for EMG
     axes_emg = plt.axes([0.1, 0.79, xrange, 0.05], sharex=axes_brs)
     axes_emg.plot(t, p_mu[istart:iend], color='black')    
     sleepy.box_off(axes_emg)
@@ -7822,7 +7822,6 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
         regions = list(cell_info[cell_info.ID.isin(ids)].brain_region.unique())
         #regions.sort()
         clrs = sns.color_palette('Set2', len(regions))
-    
         reg2int = {r:i for r,i in zip(regions, range(len(regions)))}
         
         cmap = plt.matplotlib.colors.ListedColormap(clrs)
@@ -7833,7 +7832,9 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
             reg_code[i] = reg2int[region]
         
         # Axes for brain region colorcode 
-        ax_rg = plt.axes([0.82, 0.1, 0.02, yrange])
+        ax_rg = plt.axes([0.82, 0.05, 0.02, yrange])
+        #ax_fr = plt.axes([0.1, 0.05, xrange, yrange], sharex=axes_brs)
+
         A = np.zeros([nunits,1])
         A[:,0] = reg_code
         ax_rg.pcolorfast(A, cmap=cmap)
