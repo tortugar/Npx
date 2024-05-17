@@ -9799,33 +9799,6 @@ def calculate_lfp_spectrum(ppath, name, LFP, fres=0.5):
 
 
 
-def spike_threshold(data, th, sign=1):
-    """
-    function used by detect_spikes_corr2; potential spikes are detected as waveforms crossing the given threshold th either
-    upwards (if sign=-1) or downwards (if sign = 1)
-    
-    :param data: spiking raw data
-    :param th: threshold to pass to qualify as a spike
-    :param sign: if sign==1, "valleys" are considered as spikes; if sign==-1, spikes are "mountains"
-    :return: indices of spike waveforms as np.array
-    """
-    if sign == 1:
-        lidx  = np.where(data[0:-2] > data[1:-1])[0]
-        ridx  = np.where(data[1:-1] <= data[2:])[0]
-        thidx = np.where(data[1:-1]<(-1*th))[0]
-
-        sidx = np.intersect1d(lidx, np.intersect1d(ridx, thidx))+1        
-    else:
-        lidx = np.where(data[0:-2] < data[1:-1])[0]
-        ridx = np.where(data[1:-1] >= data[2:])[0]
-        thidx = np.where(data[1:-1]>th)[0]
-
-        sidx = np.intersect1d(lidx, np.intersect1d(ridx, thidx))+1
-                
-    return sidx
-
-
-
 def corr_eeg(mouse, config_file='mouse_config.txt'):
     """
     Calculate EEG/EMG artifact and subtract it from EEG/EMG for
@@ -9917,6 +9890,8 @@ def corr_eeg(mouse, config_file='mouse_config.txt'):
     # up wave will happen: The next up wave comes 500ms later, the
     # next down wave comes 1 s later.
     ifirst_valley = np.argmin(np.diff(y))+1    
+    plt.plot(ifirst_valley, y[ifirst_valley], 'r*', label='Offset of first valley')
+    
     iwin = int(valley_dist/4)
     
     if ifirst_valley < iwin:
@@ -9966,12 +9941,14 @@ def corr_eeg(mouse, config_file='mouse_config.txt'):
     
     
     plt.figure()
-    plt.plot(eeg_orig[0:len(eeg_cut)])
-    plt.plot(eeg[0:len(eeg_cut)])
+    plt.subplot(211)
+    plt.plot(eeg_orig[0:len(eeg_cut)], label='Orig. EEG')
+    plt.plot(eeg[0:len(eeg_cut)], label='Corrected EEG')
+    plt.legend()
     
-    plt.figure()
-    plt.plot(emg_orig[0:len(eeg_cut)])
-    plt.plot(emg[0:len(eeg_cut)])
+    plt.subplot(212)
+    plt.plot(emg_orig[0:len(eeg_cut)], label='Orig. EMG')
+    plt.plot(emg[0:len(eeg_cut)], label='Corrected EMG')
 
     
     # save the original and corrected EEG/EMG signals
@@ -9982,8 +9959,15 @@ def corr_eeg(mouse, config_file='mouse_config.txt'):
     so.savemat(os.path.join(ppath, name, 'EMG.mat'), {'EMG':emg})
     
     # re-calculate EEG and EMG spectrograms    
-    inp = input('Overwrite sp_*.mat and msp_* files? (yes|no)')    
+    inp = input('Overwrite EEG.mat and EMG.mat as well as the sp_*.mat and msp_* files? (yes|no)\n')    
     if inp == 'yes':
+        # save the original and corrected EEG/EMG signals
+        so.savemat(os.path.join(ppath, name, 'EEG_orig.mat'), {'EEG':eeg_orig})
+        so.savemat(os.path.join(ppath, name, 'EMG_orig.mat'), {'EMG':emg_orig})
+        
+        so.savemat(os.path.join(ppath, name, 'EEG.mat'), {'EEG':eeg})
+        so.savemat(os.path.join(ppath, name, 'EMG.mat'), {'EMG':emg})
+                
         sleepy.calculate_spectrum(ppath, name)
         
     return ifirst_valley
