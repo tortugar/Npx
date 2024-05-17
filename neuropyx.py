@@ -9799,18 +9799,193 @@ def calculate_lfp_spectrum(ppath, name, LFP, fres=0.5):
 
 
 
+def spike_threshold(data, th, sign=1):
+    """
+    function used by detect_spikes_corr2; potential spikes are detected as waveforms crossing the given threshold th either
+    upwards (if sign=-1) or downwards (if sign = 1)
     
-#def write_stats(file='', flag='', figure='', group_analysis='', group_statistic='', group_pvalue='', group_effsize='', 
-#                comparisons='', pw_tests='', pw_statistic='', pw_pvalue='', pw_effsize='', tail='', sample_size='', subjects=''):
+    :param data: spiking raw data
+    :param th: threshold to pass to qualify as a spike
+    :param sign: if sign==1, "valleys" are considered as spikes; if sign==-1, spikes are "mountains"
+    :return: indices of spike waveforms as np.array
+    """
+    if sign == 1:
+        lidx  = np.where(data[0:-2] > data[1:-1])[0]
+        ridx  = np.where(data[1:-1] <= data[2:])[0]
+        thidx = np.where(data[1:-1]<(-1*th))[0]
+
+        sidx = np.intersect1d(lidx, np.intersect1d(ridx, thidx))+1        
+    else:
+        lidx = np.where(data[0:-2] < data[1:-1])[0]
+        ridx = np.where(data[1:-1] >= data[2:])[0]
+        thidx = np.where(data[1:-1]>th)[0]
+
+        sidx = np.intersect1d(lidx, np.intersect1d(ridx, thidx))+1
+                
+    return sidx
+
+
+
+def corr_eeg(mouse, config_file='mouse_config.txt'):
+    """
+    Calculate EEG/EMG artifact and subtract it from EEG/EMG for
+    correction
+
+    The artifact looks the following way:
+    Every 1000ms there's a sharp wave going down, 500ms later there's a sharp
+    wave going up.
+    So if we know when the first down wave happens, we know
+    when every up and down wave will come
+
+    Parameters
+    ----------
+    mouse : str
+        mouse name.
+    config_file : str, optional
+        file name of mouse configuration file. 
+
+    Returns
+    -------
+    None.
+
+    """
+    path = load_config(config_file)[mouse]['SL_PATH']
+    ppath, name = os.path.split(path)
+
     
-#    df = pd.read_csv(file)
+    file_eeg_orig = os.path.join(ppath, name, 'EEG_orig.mat')
+    file_emg_orig = os.path.join(ppath, name, 'EMG_orig.mat')
     
 
-# def write_stats(res, file='', flag='', figure='', test='pg_ttest')
+    if os.path.isfile(file_eeg_orig):
+        eeg = so.loadmat(file_eeg_orig, squeeze_me=True)['EEG']
+    else:
+        eeg = so.loadmat(os.path.join(ppath, name, 'EEG.mat'), squeeze_me=True)['EEG']
+
+    if os.path.isfile(file_emg_orig):
+        emg = so.loadmat(file_emg_orig, squeeze_me=True)['EMG']
+    else:
+        emg = so.loadmat(os.path.join(ppath, name, 'EMG.mat'), squeeze_me=True)['EMG']
+
+    # save original EEG/EMG
+    eeg_orig = eeg.copy()
+    emg_orig = emg.copy()
+    
+    #emg = sleepy.my_notchfilter(emg)
+    emgl = sleepy.my_lpfilter(emg, 0.2)
+    emgl = emgl[0:10*60*1000]
+    
+    emg_cut = emg[0:10*60*1000]
+    eeg_cut = eeg[0:10*60*1000]
+    
+    # Autocorrelation of low-pass filtered EMG to detect
+    # the interval in which the EMG artifact is repeated
+    a = emgl-emgl.mean()
+    m = len(a)
+    norm = np.nanstd(a) * np.nanstd(a)
+    xx = (1/m) * scipy.signal.correlate(a, a, 'same') / norm    
+    plt.figure()
+    plt.plot(xx)
+    plt.xlabel('Index lag')
+    
+    # get indices of peaks and troughts (valleys)    
+    peak_idx = scipy.signal.find_peaks(xx, prominence=0.1, distance=900)[0]
+    valley_idx = scipy.signal.find_peaks(-xx, prominence=0.1, distance=900)[0]
+    
+    # get distance between two consecutive valleys
+    valley_dist = int(np.round(np.mean(np.diff(valley_idx))))
+    hvalley_dist = int(valley_dist/2)
+    peak_dist = int(np.round(np.mean(np.diff(peak_idx))))
+    
+    print(valley_dist)
+    print(peak_dist)
+
+    # Determine the first valley (offset of the first artifact going down)
+    x = []
+    y = []
+    for i in np.arange(0, valley_dist):
+        tmp = np.sum(emg_cut[i::valley_dist])
+        y.append(tmp)
+        x.append(i)
+
+    plt.figure()
+    plt.plot(x, y)       
+    plt.plot(np.diff(y))
+    
+    # the first valley is when the first downwards jump happens
+    # if we now ifirst_valley, we know every index where a down or
+    # up wave will happen: The next up wave comes 500ms later, the
+    # next down wave comes 1 s later.
+    ifirst_valley = np.argmin(np.diff(y))+1    
+    iwin = int(valley_dist/4)
+    
+    if ifirst_valley < iwin:
+        ifirst_valley += valley_dist
+        
+    wave = []
+    wave2=[]
+    for i in np.arange(ifirst_valley, len(emg_cut), valley_dist):
+        tmp = emg_cut[i-iwin:i+iwin]
+        wave.append(tmp)
+        
+        tmp = eeg_cut[i-iwin:i+iwin]
+        wave2.append(tmp)
+        
+    wave_down_emg = np.array(wave).mean(axis=0)
+    wave_down_eeg = np.array(wave2).mean(axis=0)
+
+
+    wave, wave2 = [], []
+    for i in np.arange(ifirst_valley+hvalley_dist, len(emg_cut)-hvalley_dist, valley_dist):
+        tmp = emg_cut[i-iwin:i+iwin]
+        wave.append(tmp)
+        
+        tmp = eeg_cut[i-iwin:i+iwin]
+        wave2.append(tmp)
+        
+    wave_up_emg = np.array(wave).mean(axis=0)
+    wave_up_eeg = np.array(wave2).mean(axis=0)
+
+    
+    plt.figure()
+    plt.plot(wave_down_emg, label='EMG down')
+    plt.plot(wave_up_emg, label='EMG up')
+    
+    plt.plot(wave_down_eeg, label='EEG down')
+    plt.plot(wave_up_eeg, label='EEG up')
+    plt.legend()
+    
+    # correct EEG/EMG signals
+    for i in np.arange(ifirst_valley, len(emg)-valley_dist, valley_dist):
+        eeg[i-iwin:i+iwin] -= wave_down_eeg
+        emg[i-iwin:i+iwin] -= wave_down_emg
+        
+    for i in np.arange(ifirst_valley+hvalley_dist, len(emg)-valley_dist, valley_dist):
+        eeg[i-iwin:i+iwin] -= wave_up_eeg
+        emg[i-iwin:i+iwin] -= wave_up_emg
     
     
+    plt.figure()
+    plt.plot(eeg_orig[0:len(eeg_cut)])
+    plt.plot(eeg[0:len(eeg_cut)])
     
+    plt.figure()
+    plt.plot(emg_orig[0:len(eeg_cut)])
+    plt.plot(emg[0:len(eeg_cut)])
+
     
+    # save the original and corrected EEG/EMG signals
+    so.savemat(os.path.join(ppath, name, 'EEG_orig.mat'), {'EEG':eeg_orig})
+    so.savemat(os.path.join(ppath, name, 'EMG_orig.mat'), {'EMG':emg_orig})
     
+    so.savemat(os.path.join(ppath, name, 'EEG.mat'), {'EEG':eeg})
+    so.savemat(os.path.join(ppath, name, 'EMG.mat'), {'EMG':emg})
     
+    # re-calculate EEG and EMG spectrograms    
+    inp = input('Overwrite sp_*.mat and msp_* files? (yes|no)')    
+    if inp == 'yes':
+        sleepy.calculate_spectrum(ppath, name)
+        
+    return ifirst_valley
+
 
