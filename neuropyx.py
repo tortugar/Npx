@@ -7593,7 +7593,7 @@ def plot_firingrates_dff(units, cell_info, ids, mouse, config_file, kcuts=[],
 
 
 def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[], 
-                         tstart=0, tend=-1,
+                         tstart=0, tend=-1, ma_thr=20, ma_rem_exception=True,
                          pzscore=True, nsmooth=0,
                          pnorm_spec=False, box_filt=[], fmax=20, r_mu=[10,100],
                          vm=[], dt=2.5, tlegend=300,
@@ -7616,10 +7616,19 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
         DESCRIPTION.
     kcuts : TYPE, optional
         DESCRIPTION. The default is [].
+    tstart: float,
+        Start time of the the shown interval (in seconds)
+    tend: float
+        End point of the shown interval; if -1, how till the end.
+    ma_thr: float
+        Microarousal threshold
+    ma_rem_expection:
+        If a wake period follows REM, it stays wake, even if it
+        is shorter than the microarousal threshold ($ma_thr)
     pzscore : TYPE, optional
         DESCRIPTION. The default is True.
-    pnorm_spec : TYPE, optional
-        DESCRIPTION. The default is False.
+    pnorm_spec : bool, optional
+        If True, normalize EEG spectrogram. 
     box_filt : tuple or two element list, optional
         Filter EEG spectrogram using box filder . If [], no filtering is applied.
     fmax : TYPE, optional
@@ -7645,6 +7654,18 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
     M = sleepy.load_stateidx(ppath, file)[0]
     if len(M) > units.shape[0]:
         M = M[0:-1]
+        
+    # flatten out MAs #########################################################
+    if ma_thr>0:
+        seq = sleepy.get_sequences(np.where(M==2)[0])
+        for s in seq:
+            if np.round(len(s)*dt) <= ma_thr:
+                if ma_rem_exception:
+                    if (s[0]>1) and (M[s[0] - 1] != 1):
+                        M[s] = 3
+                else:
+                    M[s] = 3
+
     
     # brain regions corresponding to the unit IDs in @ids:
     if pregion:
