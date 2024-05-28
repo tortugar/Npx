@@ -1025,7 +1025,7 @@ def pc_transitions(PC, M, transitions, pre, post, si_threshold, sj_threshold,
                    kcuts=[], allowed_idx=[], pzscore_pc=False):
     """
     Calculate timecourse of PCs in population activity relative to brain state 
-    transitions
+    transitions.
 
     Parameters
     ----------
@@ -3941,7 +3941,7 @@ def plot_trajectories(PC, M, pre, post, istate=1, dt=2.5, ma_thr=10, ma_rem_exce
 
 
 def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, ax='', nrem2wake=False, nrem2wake_step=4,
-                   pscatter=True, local_coord=False, outline_std=True, rem_onset=False, rem_offset=False, show_avgtraj=False,
+                   pscatter=True, local_coord=False, outline_std=True, rem_onset=False, rem_offset=False, rem_offset_only_nrem=False, show_avgtraj=False,
                    pre_win=30, post_win=0, rem_min_dur=0, break_out=True, break_in=False, prefr=False, scale=1.645):
     """
     Plot for each time point the population activity within the 2D state space spanned
@@ -3977,6 +3977,11 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
         if False, use sns.kdeplot to draw outline of data spread
     rem_onset : bool
         If True, color-code the REM onset and the preceding $pre_win seconds 
+    rem_offset : bool
+        If True, plot REM->Wake->NREM transitions
+    rem_offset_only_nrem: bool
+        If True, plot only REM->Wake->NREM transitions where NREM occurs within 
+        the $post_win interval following the REM offset.
     show_avgtraj : bool
         If True, show average across all trajectories instead of each individual
         trajectory
@@ -4185,16 +4190,23 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
     if rem_offset:
         ipre_win = int(pre_win/dt)
         ipost_win = int(post_win/dt)
-        rem_end = [s[-1]+1 for s in sleepy.get_sequences(np.where(M==1)[0]) if len(s)*dt >= rem_min_dur and s[-1]+ipost_win < len(M) and s[-1]>ipre_win]    
+        rem_end_all = [s[-1]+1 for s in sleepy.get_sequences(np.where(M==1)[0]) if len(s)*dt >= rem_min_dur and s[-1]+ipost_win < len(M) and s[-1]>ipre_win]    
         tmp = []
-        for r in rem_end:
+        
+        # for each REM offset search for the end of the following wake episode
+        for r in rem_end_all:
             i = r
             while i < len(M) and M[i] != 3:
                 i += 1            
             dur = (i - r) * dt            
             if dur <= post_win:
                 tmp.append(r)                
-        rem_end = tmp
+        rem_end_nrem = tmp
+
+        if rem_offset_only_nrem:
+            rem_end = rem_end_nrem
+        else:
+            rem_end = rem_end_all
                 
         for r in rem_end:
             pc1, pc2 = PC[0,r-ipre_win:r+ipost_win+1], PC[1,r-ipre_win:r+ipost_win+1]
@@ -4305,7 +4317,7 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
         #         print(dur)
         #         tmp.append(r)                
         # rem_end = tmp
-
+        rem_end = rem_end_nrem
         
         seq = sleepy.get_sequences(np.where(M==1)[0])
         idx = state_idx[3]
@@ -7600,7 +7612,7 @@ def plot_firingrates_dff(units, cell_info, ids, mouse, config_file, kcuts=[],
 
 def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[], 
                          tstart=0, tend=-1, ma_thr=20, ma_rem_exception=True,
-                         pzscore=True, nsmooth=0,
+                         pzscore=True, nsmooth=0, 
                          pnorm_spec=False, box_filt=[], fmax=20, r_mu=[10,100],
                          vm=[], cb_ticks=[], dt=2.5, tlegend=300,
                          vm_fr=[], pregion=False):
@@ -7654,7 +7666,7 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
     None.
 
     """
-    dt = 2.5      
+    dt = 2.5          
     plt.figure(figsize=(10,10))
     sleepy.set_fontarial()
 
@@ -7679,7 +7691,7 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
                 else:
                     M[s] = 3
 
-    
+
     # brain regions corresponding to the unit IDs in @ids:
     if pregion:
         regions = [cell_info[cell_info.ID == i].brain_region.iloc[0] for i in ids]
@@ -7738,10 +7750,9 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
         for i in range(fr.shape[0]):
             fr[i,:] = (fr[i,:] - fr[i,:].mean()) / fr[i,:].std()
     
+    
     nhypno = np.min((len(M), ntime))
-    M = M[0:nhypno]
-    
-    
+    M = M[0:nhypno]        
     t = np.arange(0, len(M))*dt        
     # Axes for hypnogram
     xrange = 0.7
@@ -7769,7 +7780,7 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
     # axes for colorbar
     axes_cbar = plt.axes([0.8, 0.85, 0.05, 0.08])
 
-    im = axes_spec.pcolorfast(t, freq[ifreq], SP[ifreq,:], vmin=vm[0], vmax=vm[1], cmap='jet')
+    im = axes_spec.pcolormesh(t, freq[ifreq], SP[ifreq,:], vmin=vm[0], vmax=vm[1], cmap='jet')
     sleepy.box_off(axes_spec)
     axes_spec.axes.get_xaxis().set_visible(False)
     axes_spec.spines["bottom"].set_visible(False)
