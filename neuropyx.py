@@ -9123,10 +9123,16 @@ def laser_triggered_train(ppath, name, train, pre, post, nbin=1, offs=0, iters=1
     dt = nbin*1.0/sr
     t = np.arange(0, raster.shape[1]) * dt - pre*(1.0/sr)
     fr = raster.mean(axis=0)
-        
+     
+    # NEW 06/05/24 ############################################################
     if sf > 0:
-        fr = sleepy.smooth_data(fr, sf)
-            
+        fr2 = np.concatenate((np.flip(fr), fr, np.flip(fr)))
+        n = fr.shape[0]
+        
+        fr2 = sleepy.smooth_data(fr2, sf)
+        fr = fr2[n:2*n]
+    ###########################################################################        
+    
     if pplot:
         sleepy.set_fontarial()
         plt.figure(figsize=(3.5,5))
