@@ -959,6 +959,27 @@ def fr_transitions(units, M, unit_info, transitions, pre, post, si_threshold, sj
 
 
 def fr_transitions_stats(df_trans, base_int, unit_avg=True, dt=2.5, time_mode='midpoint'):
+    """
+    
+    Parameters
+    ----------
+    df_trans : TYPE
+        DESCRIPTION.
+    base_int : TYPE
+        DESCRIPTION.
+    unit_avg : TYPE, optional
+        DESCRIPTION. The default is True.
+    dt : TYPE, optional
+        DESCRIPTION. The default is 2.5.
+    time_mode : str, optional
+        options: 'midpoint' or 'endpoint'. The default is 'midpoint'.
+
+    Returns
+    -------
+    df_stats : TYPE
+        DESCRIPTION.
+
+    """
     
     # test if df has column ms_id
 
@@ -983,10 +1004,8 @@ def fr_transitions_stats(df_trans, base_int, unit_avg=True, dt=2.5, time_mode='m
     pre = t[0]
     post = t[-1]
     nbin = int(np.floor((abs(pre)+post)/base_int))            
-    #pdb.set_trace()
     trans_dict = {}
     for tr in df_trans.trans.unique():
-        print
         trans_mx = np.zeros((len(ids), len(t)))
 
         for i,ID in enumerate(ids):
@@ -1176,7 +1195,7 @@ def pc_transitions_laser(mouse, PC, M, transitions, pre, post, si_threshold, sj_
                    ma_thr=10, ma_rem_exception=False, sdt=2.5, ma_mode=False, 
                    kcuts=[], allowed_idx=[], pzscore_pc=True, config_file=''):
     """
-    
+    Compare spontaneous and laser-induced brain state transitions
 
     Parameters
     ----------
@@ -1361,10 +1380,9 @@ def pc_transitions_laser(mouse, PC, M, transitions, pre, post, si_threshold, sj_
                         # i = 10, ipre = 2, ipost = 2
                         # 8,9,10
                         # np.arange(8,12) = 8,9,10,11,12
-                        #pdb.set_trace()
                         
                         laser_on = 'no'
-                        if ti in laser_idx:
+                        if ti+1 in laser_idx:
                             laser_on = 'yes'
 
                         
@@ -9058,6 +9076,7 @@ def laser_triggered_train(ppath, name, train, pre, post, nbin=1, offs=0, iters=1
                    istate=1 - consider only REM trials
                    istate=2 - consider only Wake trials 
                    istate=3 - consider only NREM trials
+    :param sf: something factor for firing rates
     :param laser_end: if > -1, then use only the first $laser_end seconds during laser interval
                 for fr_lsr
     :return: 
@@ -9195,10 +9214,11 @@ def upsample_mx(x, nbin):
     return y
 
 
+
 def downsample_mx(X, nbin):
     """
     y = downsample_vec(x, nbin)
-    downsample the vector x by replacing nbin consecutive
+    downsample the columns in x by replacing nbin consecutive rows
     bin by their mean
     @RETURN: the downsampled vector
     """
