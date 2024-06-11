@@ -1032,7 +1032,7 @@ def fr_transitions_stats(df_trans, base_int, unit_avg=True, dt=2.5, time_mode='m
                 tpoint = i*(ibin*dt)+tinit + ibin*dt
             tpoint = float('%.2f'%tpoint)
             
-            data.append([tpoint, p.pvalue, sig, tr])
+            data.append([tpoint, p.pvalue*(nbin-1), sig, tr])
     df_stats = pd.DataFrame(data = data, columns = ['time', 'p-value', 'sig', 'trans'])
 
     return df_stats
