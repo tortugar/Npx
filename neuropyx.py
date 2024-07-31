@@ -22,6 +22,7 @@ from scipy import linalg
 import matplotlib as mpl
 from sklearn.decomposition import PCA
 import math
+import h5py
 # debugger
 import pdb
 
@@ -35,9 +36,7 @@ def brstate_class(np_path, sleep_path, sleep_rec, mouse, tend=-1, tstart=0, pzsc
     calculate average firing rate during each brain state and then 
     perform statistics for units to classify them into REM-max, Wake-max, or NREM-max.
     For each ROI anova is performed, followed by Tukey-test
-    
-    
-    
+            
     :param np_path: folder where firing rates are located
     :param sleep_path: folder where EEG data and sleep annotation is located
     :param sleep_rec: name of sleep recording
@@ -451,10 +450,6 @@ def load_config(config):
             for b in a:
                 c = re.split('-', b)
                 c = [s.strip() for s in c]
-                #pdb.set_trace()
-                #for l in c:
-                #    if l == '$':
-                #        c[1] = len(M)
                 k1 = float(c[0])
                 if re.match(r'[\d\.]+', c[1]):
                     k2 = float(c[1])
@@ -579,23 +574,23 @@ def exclude_units(units, mouse, config_file):
 
 def fr_corr_state(units, M, idx1=[], idx2=[], win=60, state=3, ma_thr=10, mode='cross', pzscore=True, pplot=True, dt=2.5):
     """
-    Perform cross-correlation between firing rates. Calculate the correlation for each pair
-    of the provided neurons unitIDs (in idx1 and idx2)
+    Perform cross-correlation between firing rates for a given brain state. 
+    Calculate the correlation for each pair of the provided neurons unitIDs (in idx1 and idx2)
 
     Parameters
     ----------
     units : pd.DataFrame
         Each column corresponds to one unit. The column name is the unitID.
         So to get all unit ID, get all column names
-    M : TYPE
-        DESCRIPTION.
-    idx1 : TYPE, optional
+    M : np.array
+        hypnogram.
+    idx1 : list, optional
         List of unitIDs for neuron1. If empty, use all neurons (unitIDs)
         The default is [].
-    idx2 : TYPE, optional
+    idx2 : list, optional
         List of unitIDs for neuron1. If empty, use all neurons (unitIDs)
         The default is [].
-    win : TYPE, optional
+    win : float, optional
         DESCRIPTION. The default is 120.
     state : TYPE, optional
         DESCRIPTION. The default is 3.
@@ -1652,6 +1647,9 @@ def sleep_components(units, M, wake_dur=600, wake_break=60, ndim=3, nsmooth=0,
     unitIDs = [unit for unit in unitIDs if re.split('_', unit)[1] == 'good']
     nsample = nhypno           # number of time points
     nvar    = len(unitIDs)     # number of units
+    # Note the number of samples stays the same; while the number is variables
+    # (or dimensions) is reduced! We want to keep the same number of time points,
+    # but have only a few 'modes'.    
     R = np.zeros((nvar, nsample))
     #@tidx are the indices we're further considering.
     
@@ -1719,7 +1717,8 @@ def sleep_components(units, M, wake_dur=600, wake_break=60, ndim=3, nsmooth=0,
     # and each row is a time point
     U,S,Vh = scipy.linalg.svd(Y)
     
-    # each row in Vh is an eigenvector of the COV matrix:    
+    # each row in Vh is an eigenvector of the COV matrix;
+    # to get the PCs, we project R onto the eigenvectors:
     PC = np.dot(Vh, R)[0:ndim,:]
     V = S**2
     
@@ -7916,11 +7915,13 @@ def plot_firingrates_map2(cell_info, ids, mouse, config_file, kcuts=[],
         DESCRIPTION. The default is False.
     box_filt : TYPE, optional
         DESCRIPTION. The default is [].
-    fmax : TYPE, optional
-        DESCRIPTION. The default is 20.
-    vm : list, optional
+    fmax : float, optional
+        Maximal frequency in EEG spectrogram. The default is 20.
+    vm : tuple, optional
+        Min and Max value of color saturation of EEG spectrogram. If empty,
+        determine saturation automatically.
+    
         
-
     Returns
     -------
     None.
@@ -7956,7 +7957,11 @@ def plot_firingrates_map2(cell_info, ids, mouse, config_file, kcuts=[],
                     M[s] = 3
     ###########################################################################    
     tr_path = load_config(config_file)[mouse]['TR_PATH']
-    units = np.load(os.path.join(tr_path,'1k_train.npz')) 
+    try:
+        units = np.load(os.path.join(tr_path,'lfp_1k_train.npz')) 
+    except:
+        units = np.load(os.path.join(tr_path,'1k_train.npz')) 
+        
 
     unitIDs = [unit for unit in list(units.keys()) if '_' in unit]
     unitIDs = [unit for unit in unitIDs if re.split('_', unit)[1] == 'good']
@@ -8055,8 +8060,6 @@ def plot_firingrates_map2(cell_info, ids, mouse, config_file, kcuts=[],
     fr = fr[:,istart_tr:iend_tr]
     t_tr = np.arange(0, fr.shape[1])*dt_tr
     
-    pdb.set_trace()
-    
     # Axes for hypnogram
     xrange = 0.7
     axes_brs = plt.axes([0.1, 0.95, xrange, 0.03])
@@ -8133,14 +8136,12 @@ def plot_firingrates_map2(cell_info, ids, mouse, config_file, kcuts=[],
         region = cell_info[cell_info.ID == ID]['brain_region'].item()        
         reg_code[i] = reg2int[region]
 
-
     # Axes for brain region colorcode 
     ax_rg = plt.axes([0.82, 0.1, 0.02, yrange])
     A = np.zeros([nunits,1])
     A[:,0] = reg_code
     ax_rg.pcolorfast(A, cmap=cmap)
     sleepy._despine_axes(ax_rg)
-
     
     # Add axes for brain region legends
     ax_lb = plt.axes([0.85, 0.1, 0.1, yrange*0.25])
@@ -8153,12 +8154,74 @@ def plot_firingrates_map2(cell_info, ids, mouse, config_file, kcuts=[],
     ax_lb.set_xlim([0, 2])
     
     sleepy._despine_axes(ax_lb)
-    
-    
+        
     print(reg2int)
     return reg_code
 
+
+
+def downsample_fr(mouse, config_file, ndown, ids=[]):
+    """
+    Downsample 1ms firing rates by factor $ndown, and
+    return as np.array, with each row corresponding to a unit
+
+    Parameters
+    ----------
+    units : TYPE
+        DESCRIPTION.
+    tr_path : TYPE
+        DESCRIPTION.
+    ndown : TYPE
+        DESCRIPTION.
+    ids : TYPE
+        List of unit IDs. If empty, process all units in $units.
+
+
+    Returns
+    -------
+    R : TYPE
+        DESCRIPTION.
+    processsed_ids: list
+        list of unit IDs in np.array R (row by row)
+
+    """
+    
+    tr_path = load_config(config_file)[mouse]['TR_PATH']
+    try:
+        units = np.load(os.path.join(tr_path,'lfp_1k_train.npz')) 
+    except:
+        units = np.load(os.path.join(tr_path,'1k_train.npz')) 
         
+    # Selects IDs of units
+    if len(ids) == 0:
+        ids = [unit for unit in list(units.keys()) if '_' in unit]
+        ids = [unit for unit in ids if re.split('_', unit)[1] == 'good']
+        unitIDs = ids
+    else:
+        unitIDs = ids
+                
+    nsample = int(len(units[unitIDs[0]])/ndown)
+    R = np.zeros((len(units), nsample))
+    fr_file = os.path.join(tr_path, 'fr_fine_ndown%d.mat' % ndown)
+    if not os.path.isfile(fr_file):
+        print('downsampling spike trains...')
+        processed_ids = []
+        for i, unit in enumerate(unitIDs):
+            tmp = sleepy.downsample_vec(np.array(units[unit]), ndown)            
+            R[i,:] = tmp
+            processed_ids.append(unit)
+        so.savemat(fr_file, {'R':R, 'ndown':ndown, 'ID':np.array(processed_ids)})
+        print('saving spike trains...')
+        print('done.')
+    else:
+        tmp = so.loadmat(fr_file, squeeze_me=True)
+        R = tmp['R']
+        processed_ids = list(tmp['ID'])
+        processed_ids = [p.strip() for p in processed_ids]
+
+    return R, processed_ids
+        
+
 
 def plot_avg_firingrates(units, cell_info, ids, M, pzscore=True, 
                          pind_axes=True, dt=2.5, nsmooth=0, ma_thr=10, 
@@ -8187,8 +8250,8 @@ def plot_avg_firingrates(units, cell_info, ids, M, pzscore=True,
         DESCRIPTION. The default is 2.5.
     nsmooth : TYPE, optional
         DESCRIPTION. The default is 0.
-    ma_thr : TYPE, optional
-        DESCRIPTION. The default is 10.
+    ma_thr : float, optional
+        Microarousal threshold. The default is 10.
     ma_rem_exception : TYPE, optional
         DESCRIPTION. The default is False.
     ma_mode : bool
@@ -8514,8 +8577,8 @@ def pc_infraslow(PC, M, mouse, kcuts=(), dt=2.5, nsmooth=0, ma_thr=20,
         DESCRIPTION. The default is 120.
     win : TYPE, optional
         DESCRIPTION. The default is 120.
-    pnorm : TYPE, optional
-        DESCRIPTION. The default is False.
+    pnorm : bool, optional
+        If True, normalize PSD of PC and sigma power (by dividing by mean power).
     spec_norm : TYPE, optional
         DESCRIPTION. The default is True.
     spec_filt : TYPE, optional
@@ -8599,7 +8662,7 @@ def pc_infraslow(PC, M, mouse, kcuts=(), dt=2.5, nsmooth=0, ma_thr=20,
     
     # normalize sigma power spectrum
     data = []
-    if pnorm==True:
+    if pnorm:
         Spec = Spec / Spec.mean()
     data += zip([mouse]*len(f), f, Spec, ['Spec']*len(f))
 
@@ -8904,7 +8967,6 @@ def is_cycle(mouse, units, band, ids=[], mouse_config='mouse_config.txt',
         M = M[tidx]
         nhypno = len(tidx)        
     ###########################################################################    
-
 
     seq = sleepy.get_sequences(np.where(M==2)[0])
     for s in seq:
@@ -9890,9 +9952,6 @@ def corr_eeg(mouse, config_file='mouse_config.txt'):
     config_file : str, optional
         file name of mouse configuration file. 
 
-    Returns
-    -------
-    None.
 
     """
     path = load_config(config_file)[mouse]['SL_PATH']
@@ -9906,12 +9965,21 @@ def corr_eeg(mouse, config_file='mouse_config.txt'):
     if os.path.isfile(file_eeg_orig):
         eeg = so.loadmat(file_eeg_orig, squeeze_me=True)['EEG']
     else:
-        eeg = so.loadmat(os.path.join(ppath, name, 'EEG.mat'), squeeze_me=True)['EEG']
+        try:
+            eeg = so.loadmat(os.path.join(ppath, name, 'EEG.mat'), squeeze_me=True)['EEG']
+        except:
+            eeg = np.array(h5py.File(os.path.join(ppath, name, 'EEG.mat'),'r').get('EEG'))        
+            eeg = np.squeeze(eeg)
+
 
     if os.path.isfile(file_emg_orig):
-        emg = so.loadmat(file_emg_orig, squeeze_me=True)['EMG']
+        emg = so.loadmat(file_emg_orig, squeeze_me=True)['EMG']            
     else:
-        emg = so.loadmat(os.path.join(ppath, name, 'EMG.mat'), squeeze_me=True)['EMG']
+        try: 
+            emg = so.loadmat(os.path.join(ppath, name, 'EMG.mat'), squeeze_me=True)['EMG']
+        except:
+            emg = np.array(h5py.File(os.path.join(ppath, name, 'EMG.mat'),'r').get('EMG'))        
+            emg = np.squeeze(emg)
 
     # save original EEG/EMG
     eeg_orig = eeg.copy()
@@ -9979,8 +10047,8 @@ def corr_eeg(mouse, config_file='mouse_config.txt'):
         tmp = eeg_cut[i-iwin:i+iwin]
         wave2.append(tmp)
         
-    wave_down_emg = np.array(wave).mean(axis=0)
-    wave_down_eeg = np.array(wave2).mean(axis=0)
+    wave_down_emg = np.array(wave[1:-1]).mean(axis=0)
+    wave_down_eeg = np.array(wave2[1:-1]).mean(axis=0)
 
 
     wave, wave2 = [], []
