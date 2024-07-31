@@ -4542,12 +4542,10 @@ def state_space_geometry(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=
                 ax.add_artist(ell)
                 
                 area = np.pi * v[0] * v[1]
-                data_geom += [list(C.mean(axis=0)) + [area] + [label]]
-                
+                data_geom += [list(C.mean(axis=0)) + [area] + [label]]                
         else:
             for C,clr in zip([Cperm, Crefr], rp_clrs):
                 sns.kdeplot(x=C[:, 0], y=C[:,1], ax=ax, color=clr, fill=True, alpha=0.8, levels=[0.25, 0.5, 0.75, 1])
-
 
         if outline_std:
             df_geom = pd.DataFrame(data=data_geom, columns=['pc1', 'pc2', 'area', 'state'])
