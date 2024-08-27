@@ -514,8 +514,10 @@ def load_mouse(mouse_id, config_file):
     traind_file = ''
     if os.path.isfile(os.path.join(np_path, 'traind.csv')):
         traind_file = 'traind.csv'
-    else:
+    elif os.path.isfile(os.path.join(np_path, 'traind.csv')):
         traind_file = 'spike_train.csv'
+    else:
+        traind_file = 'traind_lfp.csv'
 
     units = pd.read_csv(os.path.join(np_path, traind_file)) 
 
@@ -1614,7 +1616,7 @@ def sleep_components(units, M, wake_dur=600, wake_break=60, ndim=3, nsmooth=0,
             
     idx : np.array 
         Indices of time bins used for PC calculation. 
-        NOTE that @idex are the indices obtained
+        NOTE that @idx are the indices obtained
         AFTER cutting out the KCUT intervals! 
 
     """
@@ -1861,11 +1863,9 @@ def sleep_components(units, M, wake_dur=600, wake_break=60, ndim=3, nsmooth=0,
         
         nhypno = np.min((len(Morig), units.shape[0]))
         idx_total = np.arange(0, nhypno)
-
         
         idx_total = np.setdiff1d(idx_total, kidx)
         idx_total = np.setdiff1d(idx_total, widx)
-
 
     return PC, V, Vh, idx
 
@@ -1945,13 +1945,15 @@ def kcut_idx2(M, kcuts, X = [], dt=2.5):
                 
     return tidx
 
+
    
-def align_pcsign(PC, mouse, rem_pca=0, kcuts=[], config_file='', pnorm_spec=True):
+def align_pcsign(PC, mouse, rem_pca=0, kcuts=[], align_pc3=True, config_file='', pnorm_spec=True):
     """
     Automatically determine the sign of the given PCs. 
     Fix PC1 (normally increased during REM) though activity during REM sleep.
-    Fix PCA (normally positively correlated with sigma power) through its
+    Fix PC2 (normally positively correlated with sigma power) through its
     correlation with the sigma power.
+    Fix PC3...PCn the same way as PC1
 
     Double-check that kcut is really working! 
 
@@ -1963,8 +1965,8 @@ def align_pcsign(PC, mouse, rem_pca=0, kcuts=[], config_file='', pnorm_spec=True
         mouse name.
     rem_pca : int, optional
         0 or 1. If 0, assume that PC1 (PC[0,:]) is the "REM-PC".
-    kcuts : TYPE, optional
-        DESCRIPTION. The default is [].
+    kcuts : list of tuples
+        Areas at beginning or end to remove from recording. The default is [].
     config_file : TYPE, optional
         DESCRIPTION. The default is ''.
     pnorm_spec : TYPE, optional
@@ -1975,8 +1977,7 @@ def align_pcsign(PC, mouse, rem_pca=0, kcuts=[], config_file='', pnorm_spec=True
     pc_sign : list of length PC.shape[0]
         1 or -1 depending on whether the orientation of the PC should be changed or not.
 
-    """
-    
+    """    
     ndim = PC.shape[0]        
     pc_sign = [1 for i in range(ndim)]
     
@@ -1986,8 +1987,7 @@ def align_pcsign(PC, mouse, rem_pca=0, kcuts=[], config_file='', pnorm_spec=True
     path = load_config(config_file)[mouse]['SL_PATH']
     ppath, name = os.path.split(path)
     M = sleepy.load_stateidx(ppath, name)[0]
-        
-                    
+                            
     sigma = [10,15]
     P = so.loadmat(os.path.join(ppath, name, 'sp_%s.mat'%name), squeeze_me=True)
     SP = P['SP']
@@ -2007,6 +2007,10 @@ def align_pcsign(PC, mouse, rem_pca=0, kcuts=[], config_file='', pnorm_spec=True
     SP = SP[:,tidx]
     ################################    
     
+    if SP.shape[1] != PC.shape[1]:
+        print('Check kcut!!!')
+        print('Shape of SP = %d; shape of PC = %d' % (SP.shape[1], PC.shape[1]))
+                            
     if rem_pca == 0:
         sigma_pca = 1
     else:
@@ -2022,15 +2026,16 @@ def align_pcsign(PC, mouse, rem_pca=0, kcuts=[], config_file='', pnorm_spec=True
     a = pc1[rem_idx].mean()
     if a < 0:
         pc_sign[rem_pca] = -1
-        
-        
-    # fix PC3 the same way
-    if PC.shape[0] > 2:
-        pc3 = PC[2,:]
-        rem_idx = np.where(M==1)[0]
-        a = pc3[rem_idx].mean()
-        if a < 0:
-            pc_sign[2] = -1
+                
+    # fix PC3...PCn the same way
+    if align_pc3:
+        if PC.shape[0] >= 3:
+            for j in range(2, PC.shape[0]):
+                pc3 = PC[j,:]
+                rem_idx = np.where(M==1)[0]
+                a = pc3[rem_idx].mean()
+                if a < 0:
+                    pc_sign[j] = -1
     
     # fix PC2 through correlation with sigma power
     if pnorm_spec:
@@ -3005,7 +3010,7 @@ def pc_reconstruction(units, cell_info, ndim=3, nsmooth=0, pnorm=True, pzscore=F
 
 
 def pc_reconstruction2(units, cell_info, time_idx=[], ndim=3, nsmooth=0, detrend=False, pnorm=True, pzscore=False, 
-                      pc_sign=[], dt=2.5, kcuts=[], pearson=False, pplot=True, sign_plot=True):
+                      pc_sign=[], dim_reconstr=[], dt=2.5, kcuts=[], pearson=False, pplot=True, sign_plot=True):
     """
     Use whole time axis for smoothing and z-scoring.
     Calculate SVD only using time points in @time_idx and reconstruct firing rates
@@ -3129,8 +3134,11 @@ def pc_reconstruction2(units, cell_info, time_idx=[], ndim=3, nsmooth=0, detrend
     for i in range(ndim):
         SM[i,i] = S[i]
 
+    if len(dim_reconstr) == 0:
+        dim_reconstr = range(0, ndim)
+
     # That's the reconstruction:
-    Yhat = (np.dot(U[:,0:ndim], np.dot(SM[0:ndim,:], Vh[0:ndim,:]))) * np.sqrt(nsample-1)
+    Yhat = (np.dot(U[:,dim_reconstr], np.dot(SM[dim_reconstr,:], Vh[dim_reconstr,:]))) * np.sqrt(nsample-1)
 
     # Alternative:
     #      neurons x dim  *  [dim x neurons *  neurons x time]       
@@ -3407,7 +3415,7 @@ def optimal_direction(dfc, pref_direction, thr=0, pplot=True, ax='', brain_regio
 
 
 def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], min_laser=20, pzscore_pc=False, local_pzscore=True,
-                        pplot=True, ci=None, refractory_rule=False, ma_thr=10, ma_rem_exception=False,
+                        pplot=True, ci=None, refractory_rule=False, ma_thr=10, ma_rem_exception=False, rnd_laser=True,
                         config_file='mouse_config.txt'):
     """
     Calculated the time course of the provided PCs relative to the laser onset.
@@ -3511,10 +3519,30 @@ def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], min_laser=20, pzscore
         idxs, idxe = sleepy.laser_start_end(lsr)
         idxs = [int(i/nbin) for i in idxs]
         idxe = [int(i/nbin) for i in idxe]
-                
+
+        dur = int(60/2.5)                
+        if rnd_laser:
+            
+            idxs_rnd = []
+            idxe_rnd = []
+            
+            tmp = np.random.randint(idxs[0])
+            idxs_rnd.append(tmp)
+            idxe_rnd.append(tmp+dur)
+            for (a,b) in zip(idxe[0:-1], idxs[1:]):
+                tmp = np.random.randint(a,b)
+                idxs_rnd.append(a)
+                idxe_rnd.append(a+dur)
+
+            idxs = idxs_rnd 
+            idxe = idxe_rnd                                       
+            
+        
         laser_idx = []
         for (si,sj) in zip(idxs, idxe):
-            laser_idx += list(range(si,sj+1))
+            # 08/23/24 added if statement
+            if sj < nhypno:            
+                laser_idx += list(range(si,sj+1))
 
         nlsr = int(np.floor(lsr.shape[0]/nbin))
         laser = np.zeros((nlsr,))
@@ -7633,7 +7661,12 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
                          vm_fr=[], pregion=False):
     """
     See also &plot_firingrates() and &plot_firingrates_map()
-    Plot firing rates of selected units as heamtp
+    Plot firing rates of selected units as heatmap.
+    
+    Note typically units are arranged in a way that a low ID number corresponds
+    to a 'deep' unit.
+    
+    
 
     Parameters
     ----------
@@ -7756,7 +7789,13 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
     
     nunits = len(ids)
     ntime = units.shape[0]
+    #units are organized in columns like: 0_good, 1_good, ... n_good    
     fr = np.array(units[ids]).T
+    # fr is organized in rows:
+    # 0_good
+    # 1_good
+    # ...
+    # n_good
 
     if nsmooth > 0:
         for i in range(fr.shape[0]):
@@ -9058,9 +9097,12 @@ def is_cycle(mouse, units, band, ids=[], mouse_config='mouse_config.txt',
                         fr_morph = time_morph(fr_cut, nstates)
                         sigma_morph = time_morph(sigma_cut, nstates)
     
-                        data += zip([unit]*nstates, range(nstates), fr_morph, phase_bins, sigma_morph, [str(isection)]*nstates)
+                        #data += zip([unit]*nstates, range(nstates), fr_morph, phase_bins, sigma_morph, [str(isection)]*nstates)
+                        # 08/26/24 changing type of last element to int
+                        data += zip([unit]*nstates, range(nstates), fr_morph, phase_bins, sigma_morph, [isection]*nstates)
     
     df = pd.DataFrame(data=data, columns=['ID', 'section', 'fr', 'phase', 'sigma', 'irem'])
+    
     dfm = df.groupby(['ID', 'section']).mean().reset_index()
     
     df_section = df[~df.irem.isna()].groupby(['ID', 'section', 'phase', 'irem']).mean().reset_index()
