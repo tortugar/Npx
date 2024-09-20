@@ -3415,7 +3415,7 @@ def optimal_direction(dfc, pref_direction, thr=0, pplot=True, ax='', brain_regio
 
 
 def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], min_laser=20, pzscore_pc=False, local_pzscore=True,
-                        pplot=True, ci=None, refractory_rule=False, ma_thr=10, ma_rem_exception=False, rnd_laser=True,
+                        pplot=True, ci=None, refractory_rule=False, ma_thr=10, ma_rem_exception=False, rnd_laser=True, seed=1,
                         config_file='mouse_config.txt'):
     """
     Calculated the time course of the provided PCs relative to the laser onset.
@@ -3432,7 +3432,7 @@ def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], min_laser=20, pzscore
         Hypnogram.
     mouse : str
         Mouse name.
-    kcuts : TYPE, optional
+    kcuts : list of tuples, optional
         DESCRIPTION. The default is [].
     min_laser : float, optional
         Minimum duration of laser train. If laser duration < $min_laser, 
@@ -3466,6 +3466,9 @@ def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], min_laser=20, pzscore
         'rem_delay': Delay from laser to REM onset; if there's no REM the value is set to -1
 
     """
+    if rnd_laser:
+        np.random.seed(seed)
+    
     dt = 2.5
     
     ddir = load_config(config_file)[mouse]['SL_PATH']
@@ -3526,18 +3529,22 @@ def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], min_laser=20, pzscore
             idxs_rnd = []
             idxe_rnd = []
             
-            tmp = np.random.randint(idxs[0])
+            tmp = np.random.randint(dur, idxs[0]-dur)
             idxs_rnd.append(tmp)
             idxe_rnd.append(tmp+dur)
             for (a,b) in zip(idxe[0:-1], idxs[1:]):
-                tmp = np.random.randint(a,b)
-                idxs_rnd.append(a)
-                idxe_rnd.append(a+dur)
+                
+                if a+2*dur < b-dur:
+                    
+                    tmp = np.random.randint(a+2*dur,b-dur)
+                    idxs_rnd.append(tmp)
+                    idxe_rnd.append(tmp+dur)
 
             idxs = idxs_rnd 
             idxe = idxe_rnd                                       
             
         
+
         laser_idx = []
         for (si,sj) in zip(idxs, idxe):
             # 08/23/24 added if statement
@@ -3804,8 +3811,7 @@ def laser_triggered_frs(units, pre, post, mouse, kcuts=[], ma_thr=10, ma_rem_exc
                 R[i,:] = (tmp - tmp.mean()) / tmp.std()
             else:
                 R[i,:] = tmp
-    
-    
+        
         label = []
         for p in range(0, nvar):
             l = unitIDs[p]
@@ -3907,8 +3913,6 @@ def plot_trajectories(PC, M, pre, post, istate=1, dt=2.5, ma_thr=10, ma_rem_exce
             seq = sleepy.get_sequences(np.where(M==istate)[0])
         else:
             seq = [np.arange(0, len(M))]
-    
-                
     
         if len(state_num) > 0:
             seq = [seq[i] for i in state_num]
@@ -7652,22 +7656,19 @@ def plot_firingrates_dff(units, cell_info, ids, mouse, config_file, kcuts=[],
     
 
 
-
 def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[], 
                          tstart=0, tend=-1, ma_thr=20, ma_rem_exception=True,
-                         pzscore=True, nsmooth=0, 
+                         pzscore=True, nsmooth=0, cmap_fr='', yrange_fr=-1,
                          pnorm_spec=False, box_filt=[], fmax=20, r_mu=[10,100],
                          vm=[], cb_ticks=[], dt=2.5, tlegend=300,
                          vm_fr=[], pregion=False):
     """
-    See also &plot_firingrates() and &plot_firingrates_map()
+    See also &plot_firingrates() and &plot_firingrates_map2()
     Plot firing rates of selected units as heatmap.
     
     Note typically units are arranged in a way that a low ID number corresponds
     to a 'deep' unit.
     
-    
-
     Parameters
     ----------
     units : pd.DataFrame
@@ -7738,7 +7739,6 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
                         M[s] = 3
                 else:
                     M[s] = 3
-
 
     # brain regions corresponding to the unit IDs in @ids:
     if pregion:
@@ -7829,10 +7829,10 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
     med = np.median(SP.max(axis=0))
     if len(vm) == 0:
         vm = [0, med*2.0]    
-    # axes for specrogram 
+    # axes for spectrogram 
     axes_spec = plt.axes([0.1, 0.85, xrange, 0.08], sharex=axes_brs)    
     # axes for colorbar
-    axes_cbar = plt.axes([0.8, 0.85, 0.05, 0.08])
+    axes_cbar = plt.axes([0.83, 0.85, 0.015, 0.08])
 
     im = axes_spec.pcolormesh(t, freq[ifreq], SP[ifreq,:], vmin=vm[0], vmax=vm[1], cmap='jet')
     sleepy.box_off(axes_spec)
@@ -7840,7 +7840,7 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
     axes_spec.spines["bottom"].set_visible(False)
     axes_spec.set_ylabel('Freq.\n(Hz)')
     # colorbar for EEG spectrogram
-    cb = plt.colorbar(im, ax=axes_cbar, pad=0.0, aspect=10.0, location='right')
+    cb = plt.colorbar(im, cax=axes_cbar, pad=0.0, aspect=10.0, location='right')
     if pnorm_spec:
         cb.set_label('Norm. power')
     else:
@@ -7848,7 +7848,7 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
     if len(cb_ticks) > 0:
         cb.set_ticks(cb_ticks)        
     axes_cbar.set_alpha(0.0)
-    sleepy._despine_axes(axes_cbar)
+    #sleepy._despine_axes(axes_cbar)
         
     # Show EMG amplitude
     # Axes for EMG
@@ -7861,10 +7861,15 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
     axes_emg.set_ylabel('EMG\n($\mathrm{\mu}$V)')
     # END[Show EMG amplitude]
 
-    # axes for firing rates    
-    yrange = 0.68+0.05
-    ax_fr = plt.axes([0.1, 0.05, xrange, yrange], sharex=axes_brs)
-    ax_cbfr = plt.axes([0.85, 0.1+yrange*0.5, 0.05, yrange*0.5])
+    # axes for firing rates
+    yrange_fr_total = 0.73
+
+    if yrange_fr < 0:    
+        yrange = 0.68+0.05
+    else:
+        yrange = yrange_fr
+    ax_fr = plt.axes([0.1, 0.05+yrange_fr_total-yrange, xrange, yrange], sharex=axes_brs)
+    ax_cbfr = plt.axes([0.83, 0.1+yrange*0.08+yrange_fr_total-yrange, 0.015, yrange*0.5])
 
     if len(vm_fr) == 0:
         vm_fr[0] = np.percentile(fr, 1)
@@ -7872,15 +7877,18 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
 
     y = np.arange(0, nunits)
     t = np.arange(0, len(M))*dt
-    im = ax_fr.pcolorfast(t, y, fr, vmin=vm_fr[0], vmax=vm_fr[1], cmap='magma')
+    if cmap_fr == '':
+        cmap_fr = 'magma'
+    im = ax_fr.pcolorfast(t, y, fr, vmin=vm_fr[0], vmax=vm_fr[1], cmap=cmap_fr)
     sleepy.box_off(ax_fr)
     #ax_fr.set_xlabel('Time (s)')
     ax_fr.set_ylabel('Unit no.')    
-    cb = plt.colorbar(im, ax=ax_cbfr, pad=0.0, aspect=10.0, location='right')
-    sleepy._despine_axes(ax_cbfr)
+    cb = plt.colorbar(im, cax=ax_cbfr, pad=0.0, aspect=10.0, location='right')
+    cb.set_label('FR (z-scored)')
+    #sleepy._despine_axes(ax_cbfr)
 
     # Axes for time legend
-    axes_time = plt.axes([0.1, 0.02, xrange, 0.02], sharex=axes_brs)
+    axes_time = plt.axes([0.1, 0.02+yrange_fr_total-yrange, xrange, 0.02], sharex=axes_brs)
     axes_time.set_xlim([t[0], t[-1]])
     plt.plot([0,tlegend], [0,0], 'k')
     plt.text(0, -2, '%s s' % str(tlegend))
