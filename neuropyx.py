@@ -3415,7 +3415,7 @@ def optimal_direction(dfc, pref_direction, thr=0, pplot=True, ax='', brain_regio
 
 
 def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], min_laser=20, pzscore_pc=False, local_pzscore=True,
-                        pplot=True, ci=None, refractory_rule=False, ma_thr=10, ma_rem_exception=False, rnd_laser=True, seed=1,
+                        pplot=True, ci=None, refractory_rule=False, ma_thr=10, ma_rem_exception=False, rnd_laser=False, seed=1,
                         config_file='mouse_config.txt'):
     """
     Calculated the time course of the provided PCs relative to the laser onset.
@@ -3547,9 +3547,7 @@ def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], min_laser=20, pzscore
 
         laser_idx = []
         for (si,sj) in zip(idxs, idxe):
-            # 08/23/24 added if statement
-            if sj < nhypno:            
-                laser_idx += list(range(si,sj+1))
+            laser_idx += list(range(si,sj+1))
 
         nlsr = int(np.floor(lsr.shape[0]/nbin))
         laser = np.zeros((nlsr,))
@@ -6955,11 +6953,9 @@ def plot_firingrates(units, cell_info, ids, mouse,
         filt = np.ones(box_filt)
         filt = np.divide(filt, filt.sum())
         SP = scipy.signal.convolve2d(SP, filt, boundary='symm', mode='same')
-
     if pnorm_spec:
         sp_mean = SP.mean(axis=1)
         SP = np.divide(SP, np.tile(sp_mean, (SP.shape[1], 1)).T)
-
         
     # cut out kcuts: ###############
     tidx = kcut_idx(M, units, kcuts)
