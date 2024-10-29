@@ -1,6 +1,8 @@
 # Basic Neuropixels Analysis
 
-## An example recording can be found under: 
+An example recording can be found under: https://upenn.box.com/s/hiivvfe3rc07ft60rdv563018n0nfmc4
+
+Note that all data can be downloaded fairely quickly (in a few minutes with normal internet connection, except for the file `1k_train.npz`, which however is not required for most basic analyses.
 
 The folder Data contains a text file (`mouse_config.txt`) defining where all data files for each mouse are located and one example Neuropixels recording of mouse DL159.
 
@@ -25,7 +27,7 @@ KCUT: 0-660;8500-$
   *  `1ktrain.npz`: Spike trains (encoded as 1s and 0s) for each unit with 1ms resolution.
   *  `channel_locations.json` describes for each unit (referenced by its ID) the brain region and location within the Allen 3D Brain Atlas. 
 
-The folder `TR_PATH` contains the file `1ktrain.npz` with the spike trains (encoded as 1s and 0s) for each unit in 1ms resolution.
+The folder `TR_PATH` contains the file `1k_train.npz` with the spike trains (encoded as 1s and 0s) for each unit in 1ms resolution.
   
 Using `KCUT`, we can define time intervals at the beginning or end of the recording that should be cut out from the recording (often related to drift, or the mouse needing some time to fall asleep). In this case, seconds 0-660 should be removed and the time interval from 8500s till the end of the recording (`$`). 
 
@@ -42,11 +44,11 @@ The folder `SL_PATH` contains all sleep-related files including ...
 
 ---
 
-# System requirements 
+## System requirements 
 
 * All code is written in Python 3, and has been tested on Python versions 3.7, and 3.9.
 
-* The required packages for Python scripts/modules are listed at the beginning of each file. Packages can be installed using the conda package manager in the Anaconda distribution of Python. Go to https://www.anaconda.com/ to install Anaconda on Windows, MacOS, or Linux. Installation will take approximately 15 minutes.
+* The required packages for Python scripts/modules are listed at the beginning of each file. Packages can be installed using the conda package manager in the Anaconda distribution of Python (currently using version 23.9.0). Go to https://www.anaconda.com/ to install Anaconda on Windows, MacOS, or Linux. Installation will take approximately 15 minutes.
 
 * To run our code, our modules need to be added the python's system path, which can be done using
 
@@ -54,4 +56,15 @@ The folder `SL_PATH` contains all sleep-related files including ...
 import sys
 sys.path.add([path to module folder])
 ```
+
+Other frequently custom built modules are
+* sleepy.py (https://github.com/tortugar/Lab/tree/master/PySleep)
+* spyke.py (https://github.com/tortugar/Lab/tree/master/PySpike)
+
+Other python modules (available through anaconda):
+* numpy (tested using version 1.24.3)
+* scipy (tested using version 1.33.3)
+* seaborn (tested using version 0.13.2)
+* matplotlib (tested using version 3.8.4)
+* pingouin (tested using version 0.5.2)
 
