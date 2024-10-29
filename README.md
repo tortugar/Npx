@@ -1,12 +1,18 @@
 # Basic Neuropixels Analysis
 
-## Plotting firing rates and PCA
+## An example recording can be found under: 
 
-(1) In a text file (`mouse_config.txt`) define for each recording where all relevant data are located, using the following format:
+The folder Data contains a text file (`mouse_config.txt`) defining where all data files for each mouse are located and one example Neuropixels recording of mouse DL159.
+
+## Data organization
+
+### Neuropixels data
+
+The file `Data/mouse_config.txt` define for each recording where all relevant data are located, using the following format:
 
 ```
 MOUSE: DL176
-SL_PATH: /Volumes/T8/Data/Neuropixels/DL176/DL176_16_061322n3
+SL_PATH: /Volumes/T8/Data/Neuropixels/DL159/DL176_16_061322n3
 NP_PATH: /Volumes/T8/Data/Neuropixels/DL176
 TR_PATH: /Volumes/T8/Data/Neuropixels/DL176
 KCUT: 0-660;8500-$
@@ -19,3 +25,7 @@ Using `KCUT`, we can define time intervals that should be cut out from the recor
 Under `EXCLUDE: ` you can exclude units for further analysis. 
 
 Note: You can only remove intervals at the beginning or the end of the recording.
+
+### EEG/EMG recording
+
+
