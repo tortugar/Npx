@@ -1,4 +1,4 @@
-# Basic Neuropixels Analysis
+# Neuropixels Data Analysis
 
 An example recording can be found under: https://upenn.box.com/s/hiivvfe3rc07ft60rdv563018n0nfmc4
 
