@@ -48,7 +48,7 @@ The folder `SL_PATH` contains all sleep-related files including ...
 
 * All code is written in Python 3, and has been tested on Python versions 3.7, and 3.9.
 
-* The required packages for Python scripts/modules are listed at the beginning of each file. Packages can be installed using the conda package manager in the Anaconda distribution of Python. Go to https://www.anaconda.com/ to install Anaconda on Windows, MacOS, or Linux. Installation will take approximately 15 minutes.
+* The required packages for Python scripts/modules are listed at the beginning of each file. Packages can be installed using the conda package manager in the Anaconda distribution of Python (currently using version 23.9.0). Go to https://www.anaconda.com/ to install Anaconda on Windows, MacOS, or Linux. Installation will take approximately 15 minutes.
 
 * To run our code, our modules need to be added the python's system path, which can be done using
 
