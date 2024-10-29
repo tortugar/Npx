@@ -1,6 +1,7 @@
 # Basic Neuropixels Analysis
 
 An example recording can be found under: https://upenn.box.com/s/hiivvfe3rc07ft60rdv563018n0nfmc4
+
 Note that all data can be downloaded fairely quickly (in a few minutes with normal internet connection, except for the file `1k_train.npz`, which however is not required for most basic analyses.
 
 The folder Data contains a text file (`mouse_config.txt`) defining where all data files for each mouse are located and one example Neuropixels recording of mouse DL159.
@@ -55,4 +56,15 @@ The folder `SL_PATH` contains all sleep-related files including ...
 import sys
 sys.path.add([path to module folder])
 ```
+
+Other frequently custom built modules are
+* sleepy.py (https://github.com/tortugar/Lab/tree/master/PySleep)
+* spyke.py (https://github.com/tortugar/Lab/tree/master/PySpike)
+
+Other python modules (available through anaconda):
+* numpy (tested using version 1.24.3)
+* scipy (tested using version 1.33.3)
+* seaborn (tested using version 0.13.2)
+* matplotlib (tested using version 3.8.4)
+* pingouin (tested using version 0.5.2)
 
