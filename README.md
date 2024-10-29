@@ -11,21 +11,35 @@ The folder Data contains a text file (`mouse_config.txt`) defining where all dat
 The file `Data/mouse_config.txt` define for each recording where all relevant data are located, using the following format:
 
 ```
-MOUSE: DL176
-SL_PATH: /Volumes/T8/Data/Neuropixels/DL159/DL176_16_061322n3
-NP_PATH: /Volumes/T8/Data/Neuropixels/DL176
-TR_PATH: /Volumes/T8/Data/Neuropixels/DL176
+MOUSE: DL159
+SL_PATH: /Volumes/T8/Data/Neuropixels/DL159/
+NP_PATH: /Volumes/T8/Data/Neuropixels/DL159
+TR_PATH: /Volumes/T8/Data/Neuropixels/DL159
 KCUT: 0-660;8500-$
 ```
 
-These lines specific for mouse DL176 that the sleep data are in the folder mentioned after `SL_PATH`. 
-The files with all the firing rate information and histology alignment are in the folder `NP_PATH`. The spike trains discretized in 1 ms bins are saved under the folder `TR_PATH`.
-Using `KCUT`, we can define time intervals that should be cut out from the recording. In this case, seconds 0-660 should be removed and the time interval from 8500s till the end of the recording (`$`). 
+`MOUSE` defines the mouse name. 
 
-Under `EXCLUDE: ` you can exclude units for further analysis. 
+`NP_PATH` defines the folder containing all Neuropixels-related data, including ...
+  *  `traind.csv` is a pandas DataFrame (pd.DataFrame). Each columns corresponds to a unit (the columns name is the unit ID), each row corresponds to a 2.5 s time bin. The binning is aligned with the sleep annotation, EEG/EMG spectrograms (in `SL_PATH`).
+  *  `1ktrain.npz`: Spike trains (encoded as 1s and 0s) for each unit with 1ms resolution.
+  *  `channel_locations.json` describes for each unit (referenced by its ID) the brain region and location within the Allen 3D Brain Atlas. 
 
-Note: You can only remove intervals at the beginning or the end of the recording.
+The folder `TR_PATH` contains the file `1ktrain.npz` with the spike trains (encoded as 1s and 0s) for each unit in 1ms resolution.
+  
+Using `KCUT`, we can define time intervals at the beginning or end of the recording that should be cut out from the recording (often related to drift, or the mouse needing some time to fall asleep). In this case, seconds 0-660 should be removed and the time interval from 8500s till the end of the recording (`$`). 
 
-### EEG/EMG recording
+Using `EXCLUDE` you can exclude units from further analysis (e.g. units with strong drift in their firing rates). 
+
+
+### Sleep data
+
+The folder `SL_PATH` contains all sleep-related files including ...
+* The raw EEG and EMG sampled using 1 kHz resolution.
+* The sleep annotation `remidx_*.txt` in 2.5 s resolution. `*` is the name of the sleep recording (in our example, that's `DL159_7721n1`. 
+* The EEG and EMG spectrogram using the same 2.5 s binning, saved under `sp_*.mat` and `spm_*.mat`.
+* `info.txt` contains some basic information about the sleep recording (amplifier, sampling rate, time of recording, duration of recording).
+
+
 
 
