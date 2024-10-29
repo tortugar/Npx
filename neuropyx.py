@@ -2137,9 +2137,7 @@ def align_pcsign(PC, mouse, rem_pca=0, kcuts=[], align_pc3=True, config_file='',
     Fix PC1 (normally increased during REM) though activity during REM sleep.
     Fix PC2 (normally positively correlated with sigma power) through its
     correlation with the sigma power.
-    Fix PC3...PCn the same way as PC1
-
-    Double-check that kcut is really working! 
+    Fix PC3...PCn the same way as PC1.
 
     Parameters
     ----------
@@ -2151,10 +2149,12 @@ def align_pcsign(PC, mouse, rem_pca=0, kcuts=[], align_pc3=True, config_file='',
         0 or 1. If 0, assume that PC1 (PC[0,:]) is the "REM-PC".
     kcuts : list of tuples
         Areas at beginning or end to remove from recording. The default is [].
-    config_file : TYPE, optional
-        DESCRIPTION. The default is ''.
-    pnorm_spec : TYPE, optional
-        DESCRIPTION. The default is True.
+    align_pc3 : bool, optional
+        If True, adjust sign of PC3, ... PCn using the same strategy as for PC1
+    config_file : str, optional
+        File name of mouse config file. The default is ''.
+    pnorm_spec : bool, optional
+        If True, normalize EEG spectrogram. The default is True.
 
     Returns
     -------
@@ -3228,20 +3228,20 @@ def pc_reconstruction2(units, cell_info, time_idx=[], ndim=3, nsmooth=0, detrend
     ----------
     units : pd.DataFrame
         Each column is a unit, with the unit ID (str) as column name.
-    cell_info : TYPE
-        DESCRIPTION.
-    time_idx : TYPE, optional
-        DESCRIPTION. The default is [].
-    ndim : TYPE, optional
-        DESCRIPTION. The default is 3.
+    cell_info : pd.DataFrame
+        Columns 'ID' lists all units, 'brain_region' describes the brain region of each unit.
+    time_idx : list or array of indices, optional
+        Indices used (after kcut) to calculate PCs. If [], use all indices.
+    ndim : int, optional
+        Number of dimensions to reconstruct firing rates. The default is 3.
     nsmooth : float, optional
-        Smoothing factor for firing rates. The default is 0.
-    pnorm : TYPE, optional
-        DESCRIPTION. The default is True.
-    pzscore : TYPE, optional
-        DESCRIPTION. The default is False.
-    pc_sign : TYPE, optional
-        DESCRIPTION. The default is [].
+        Smoothing factor for firing rates using Gaussian kernel. The default is 0.
+    pnorm : bool, optional
+        If True, normalize PC coefficients. 
+    pzscore : bool, optional
+        If True, z-score firing rates. The default is False.
+    pc_sign : list or np.array, optional
+        Describes the sign of the PCs. PCi is multplied by pc_sign[i-1]
     dt : float, optional
         Time bin for firing rates. The default is 2.5.
     kcuts : tuple/list, optional
@@ -3284,8 +3284,7 @@ def pc_reconstruction2(units, cell_info, time_idx=[], ndim=3, nsmooth=0, detrend
         tidx = np.setdiff1d(tidx, kidx)
         nhypno = len(tidx)
     ###########################################################################    
-        
-    
+            
     unitIDs = [unit for unit in units.columns if '_' in unit]    
     unitIDs = [unit for unit in unitIDs if re.split('_', unit)[1] == 'good']
     nsample = units.shape[0]   # number of time points
@@ -4195,25 +4194,30 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
         each row are the PC coefficients or scores
     M : np.array
         brain state annotation.
-    ma_thr : TYPE, optional
-        DESCRIPTION. The default is 10.
-    ma_rem_exception : TYPE, optional
-        DESCRIPTION. The default is False.
-    kcuts : TYPE, optional
-        DESCRIPTION. The default is [].
-    dt : TYPE, optional
-        DESCRIPTION. The default is 2.5.
-    ax : TYPE, optional
-        DESCRIPTION. The default is ''.
+        1 - REM, 2 - Wake, 3 - NREM
+    ma_thr : float, optional
+        Microarousal threshold. The default is 10.
+    ma_rem_exception : bool, optional
+        If True, don't set a wake episodes after REM that is shorter then $ma_thr to NREM. 
+        The default is False.
+    kcuts : list of tuples, optional
+        Each tuple describes the start and end of an interval to be discarded. The default is [].
+    dt : float, optional
+        Time bin of firing rates and hypnogram. The default is 2.5.
+    ax : figure axis handle, optional
+        If $as is provided, use it to draw all plots on it. 
+        Otherwise generate new figure.
+        The default is ''.
     nrem2wake : Bool, optional
         if True, show NREM->Wake transitions
     nrem2wake_step: int, optional
         Show every nrem2wake_step-th NREM->Wake transition; otherwise
         it gets too clusttered
     pscatter : bool, optional
-        DESCRIPTION. The default is True.
-    local_coord : TYPE, optional
-        DESCRIPTION. The default is False.
+        If True, draw each (dimensionally reduced) population vector in a scatter plot. 
+        The default is True.
+    local_coord : bool, optional
+        If True, draw into the NREM ellipse a local coordinate system. The default is False.
     outline_std : bool
         If True, draw outline of one std using an ellipse;
         if False, use sns.kdeplot to draw outline of data spread
@@ -4235,19 +4239,28 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
     prefr: bool,
         If True, also draw outline of refractory period within state space
     scale: float
-        Scale = 1 means that the drawn ellipse outlines one standard deviation
-        for each subspace. Scale = 1.645 outlines the area (of the fitted Gaussian)
-        that comprises 90% of the data distribution.
-        Scale = 1.96 outlines 95% of the distribution
-        scale = 1.28 comprises 90% of the distribution.
+        $scale == 1 means that the drawn ellipse outlines one standard deviation
+        for each subspace. 
+        $scale == 1.645 outlines the area (of the fitted Gaussian)
+        that comprises 90% of the data distribution.                    
+        $scale == 1.96 outlines 95% of the distribution
+        
+    # ax, df_breakout, df_breakin, df_ampl
         
     Returns
     -------
     ax : plt.axes
         return axes of current figure.
-    
+        
     df_breakout : pd.DataFrame
         with columns ['angle':first_angles, 'pc1':c1, 'pc2':c2, 'pc1_org':porg1, 'pc2_org':porg2]
+        Describes along each NREM->REM trajectory the first point and angle leaving the
+        NREM subspace
+    df_breakin : pd.DataFrame
+        Describes for each REM->Wake->NREM transition trajectory the first point within NREM. 
+    df_ampl: pd.DataFrame
+        Describes for each NREM->REM ($nrem2wake=False) or NREM->Wake ($nrem2wake=True) the maximum
+        PC1 and PC2 values of the preceding trajectory of during $pre_win. 
 
     """        
     bs_map = {'rem':[0, 1, 1], 'wake':[0.6, 0, 1], 'nrem':[0.8, 0.8, 0.8]}
@@ -4545,20 +4558,7 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
                                     'pc1_rel':porg1_rel, 'pc2_rel':porg2_rel})
 
     df_breakin = []
-    if break_in:
-        
-        #rem_end = [s[-1]+1 for s in sleepy.get_sequences(np.where(M==1)[0]) if len(s)*dt >= rem_min_dur and s[-1]+ipost_win < len(M) and s[-1]>ipre_win]    
-        
-        # tmp = []
-        # for r in rem_end:
-        #     i = r
-        #     while i < len(M) and M[i] != 3:
-        #         i += 1            
-        #     dur = (i - r) * dt            
-        #     if dur <= post_win:
-        #         print(dur)
-        #         tmp.append(r)                
-        # rem_end = tmp
+    if break_in:        
         rem_end = rem_end_nrem
         
         seq = sleepy.get_sequences(np.where(M==1)[0])
@@ -8771,7 +8771,7 @@ def fr_infraslow(units, cell_info, mouse, ids=[], pzscore=True, dt=2.5, nsmooth=
 
 
 def pc_infraslow(PC, M, mouse, kcuts=(), dt=2.5, nsmooth=0, ma_thr=20, 
-                 ma_rem_exception=False, ma_mode=True, kcut=[], state=3, peeg2=False,
+                 ma_rem_exception=False, state=3, peeg2=False,
                  band=[10,15], min_dur=120, win=120, config_file='mouse_config.txt',
                  pnorm=False, spec_norm=True, spec_filt=False, box=[1,4], pplot=True):
     """
@@ -8783,49 +8783,51 @@ def pc_infraslow(PC, M, mouse, kcuts=(), dt=2.5, nsmooth=0, ma_thr=20,
 
     Parameters
     ----------
-    PC : TYPE
-        DESCRIPTION.
-    mouse : TYPE
-        DESCRIPTION.
-    kcuts : TYPE, optional
-        DESCRIPTION. The default is ().
-    dt : TYPE, optional
-        DESCRIPTION. The default is 2.5.
-    nsmooth : TYPE, optional
-        DESCRIPTION. The default is 0.
-    ma_thr : TYPE, optional
-        DESCRIPTION. The default is 20.
-    ma_rem_exception : TYPE, optional
-        DESCRIPTION. The default is False.
-    ma_mode : TYPE, optional
-        DESCRIPTION. The default is True.
-    kcut : TYPE, optional
-        DESCRIPTION. The default is [].
-    state : TYPE, optional
-        DESCRIPTION. The default is 3.
-    peeg2 : TYPE, optional
-        DESCRIPTION. The default is False.
-    band : TYPE, optional
-        DESCRIPTION. The default is [10,15].
-    min_dur : TYPE, optional
-        DESCRIPTION. The default is 120.
-    win : TYPE, optional
-        DESCRIPTION. The default is 120.
+    PC : np.array
+        Each row corresponds to a PC.
+    mouse : str
+        mouse name.
+    kcuts : list of tuples or lists with two elements.
+        Discard the time interval ranging from kcuts[i][0] to kcuts[i][1] seconds.
+    dt : float, optional
+        Time binning of PCs and hypnogram. The default is 2.5.
+    nsmooth : float, optional
+        Smooth firing rates with Gaussain kernel with standard deviation $nsmooth. The default is 0.
+    ma_thr : float, optional
+        Wake sequences <= $ma_thr s are interpreted as NREM (3). The default is 10.
+    ma_rem_exception : bool, optional
+        If True, then the MA rule does not apply for wake episodes directly following REM. 
+        The default is False.
+    state : int, optional
+        Calculate PSD only for stae $state. 1 - NREM, 2 - Wake, 3 - NREM
+    peeg2 : bool, optional
+        If True, calculate sigma power PSD using EEG2. The default is False.
+    band : tuple or list, optional
+        Define frequency range for sigma power (or other band). The default is [10,15].
+    min_dur : float, optional
+        Minimum duration of NREM bouts used for infraslow calculation. The default is 120.
+    win : float, optional
+        Time window for PSD calculation. The default is 120.
     pnorm : bool, optional
-        If True, normalize PSD of PC and sigma power (by dividing by mean power).
-    spec_norm : TYPE, optional
-        DESCRIPTION. The default is True.
-    spec_filt : TYPE, optional
-        DESCRIPTION. The default is False.
-    box : TYPE, optional
-        DESCRIPTION. The default is [1,4].
-    pplot : TYPE, optional
-        DESCRIPTION. The default is True.
+        If True, normalize PSDs of PCs and sigma power (by dividing by mean power).
+    spec_norm : bool, optional
+        If True, normalize spectrogram. The default is True.
+    spec_filt : bool, optional
+        If True, run box filter over EEG spectrogram. The default is False.
+    box : bool, optional
+        Specifies dimension of box filter, if $spec_filt == True. The default is [1,4].
+    pplot : bool optional
+        If True, plot figure. The default is True.
 
     Returns
     -------
-    df : TYPE
-        DESCRIPTION.
+    df : pd.DataFrame 
+         with columns=['mouse', 'freq', 'pow', 'typ']
+        'freq' is the frequency vlaue
+        'pow' the power for the given frequency
+        'mouse' is the given mouse name
+        'typ' specifies the PC ('PC1', 'PC2', ...) or sigma power 'Spec' 
+
 
     """
     
@@ -8858,6 +8860,7 @@ def pc_infraslow(PC, M, mouse, kcuts=(), dt=2.5, nsmooth=0, ma_thr=20,
     # cut out kcuts: ###############
     tidx = kcut_idx(M, PC, kcuts)
     M = M[tidx]
+    # PC is already kcut! 
     #PC = PC[:,tidx]
     SP = SP[:,tidx]
     pow_band = pow_band[tidx]            
