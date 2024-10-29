@@ -44,7 +44,7 @@ The folder `SL_PATH` contains all sleep-related files including ...
 
 ---
 
-# System requirements 
+## System requirements 
 
 * All code is written in Python 3, and has been tested on Python versions 3.7, and 3.9.
 
