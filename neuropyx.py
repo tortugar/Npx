@@ -1871,6 +1871,190 @@ def sleep_components(units, M, wake_dur=600, wake_break=60, ndim=3, nsmooth=0,
 
 
 
+def sleep_components_fine(ids, wake_dur=600, wake_break=60, ndim=3, nsmooth=0, 
+                     pzscore=False, detrend=False, pplot=True, pc_sign=[], 
+                     kcuts=[], mode='w', ppath='', mouse='', collapse=False,
+                     ylim=[], config_file='mouse_config.txt'):
+    dt = 2.5  
+    NDOWN = 100
+    NUP = int(dt / (0.001 * NDOWN))
+    
+    fine_scale = False
+
+    if len(config_file) == 0:
+        config_file = 'mouse_config.txt'
+    
+    path = load_config(config_file)[mouse]['SL_PATH']
+    ppath, file = os.path.split(path)
+    M = sleepy.load_stateidx(ppath, file)[0]
+
+    ###########################################################################
+    fine_scale = True
+    
+    tr_path = load_config(config_file)[mouse]['TR_PATH']
+    units = np.load(os.path.join(tr_path,'1k_train.npz')) 
+    unitIDs = [unit for unit in list(units.keys()) if '_' in unit]
+    unitIDs = [unit for unit in unitIDs if re.split('_', unit)[1] == 'good']
+
+    dt = dt / NUP
+    M = upsample_mx(M, NUP)
+    nhypno = int(np.min((len(M), units[unitIDs[0]].shape[0]/NDOWN)))
+
+    M = M[0:nhypno]
+    tidx = np.arange(0, nhypno)
+    
+    
+    # NEW 07/01/22:
+    # get the indices (in brainstate time) that we're going to completely discard:
+    if len(kcuts) > 0:
+        kidx = []
+        for kcut in kcuts:
+            a = int(kcut[0]/dt)
+            b = int(kcut[-1]/dt)
+            if b > len(M):
+                b = len(M)
+            kidx += list(np.arange(a, b))
+        
+        tidx = np.setdiff1d(tidx, kidx)
+        M = M[tidx]
+        nhypno = len(tidx)
+    ###########################################################################    
+    
+    nsample = nhypno           # number of time points
+    nvar    = len(unitIDs)     # number of units
+    R = np.zeros((nvar, nsample))
+    #@tidx are the indices we're further considereing.
+    
+    
+    print('Starting downsampling, smoothing and z-scoring')
+
+    if fine_scale:
+        fr_file = os.path.join(tr_path, 'fr_fine_ndown%d.mat' % NDOWN)
+        if not os.path.isfile(fr_file):
+            for i,unit in enumerate(unitIDs):
+                tmp = sleepy.downsample_vec(np.array(units[unit]), NDOWN)            
+                R[i,:] = tmp[tidx]
+            so.savemat(fr_file, {'R':R, 'ndown':NDOWN})
+        else:
+            R = so.loadmat(fr_file, squeeze_me=True)['R']
+            
+        for i,unit in enumerate(unitIDs):
+            tmp = R[i,:]
+            tmp = sleepy.smooth_data(tmp, nsmooth)
+            if pzscore:
+                R[i,:] = (tmp[tidx] - tmp[tidx].mean()) / tmp[tidx].std()
+            else:
+                R[i,:] = tmp[tidx]
+
+    print('Starting downsampling, smoothing and z-scoring')
+
+    if fine_scale:
+        fr_file = os.path.join(tr_path, 'fr_fine_ndown%d.mat' % NDOWN)
+        if not os.path.isfile(fr_file):
+            for i,unit in enumerate(unitIDs):
+                tmp = sleepy.downsample_vec(np.array(units[unit]), NDOWN)            
+                R[i,:] = tmp[tidx]
+            so.savemat(fr_file, {'R':R, 'ndown':NDOWN})
+        else:
+            R = so.loadmat(fr_file, squeeze_me=True)['R']
+            
+        for i,unit in enumerate(unitIDs):
+            tmp = R[i,:]
+            tmp = sleepy.smooth_data(tmp, nsmooth)
+            if pzscore:
+                R[i,:] = (tmp[tidx] - tmp[tidx].mean()) / tmp[tidx].std()
+            else:
+                R[i,:] = tmp[tidx]
+
+
+    # find long wake blocks:
+    widx = sleepy.get_sequences(np.where(M==2)[0], ibreak=int(wake_break/dt))
+    # all REM sequences
+    ridx = sleepy.get_sequences(np.where(M==1)[0])
+
+    nidx = sleepy.get_sequences(np.where(M==3)[0])
+
+    tmp = []
+    for w in widx:
+        if len(w) * dt > wake_dur:
+            tmp += list(w)            
+    widx = tmp
+
+    tmp = []
+    for r in ridx:
+        tmp += list(r)            
+    ridx = tmp
+
+    tmp = []
+    for r in nidx:
+        tmp += list(r)            
+    nidx = tmp
+
+    nhypno = np.min((len(M), units.shape[0]))
+    idx = np.arange(0, np.min((len(M), units.shape[0])))
+    if 'w' in mode:
+        idx = np.setdiff1d(idx, widx)
+    else:
+        widx = []
+    if 'r' in mode:
+        idx = np.setdiff1d(idx, ridx)
+    if 'n' in mode:
+        idx = np.setdiff1d(idx, nidx)
+    else:
+        ridx = []
+                    
+    # divide by sqrt(nsample - 1) to make SVD equivalent to PCA
+    Y = R[:,idx].T / np.sqrt(nsample-1)
+    # make sure the the columns of Y are mean-zero
+    for i in range(nvar):
+        Y[:,i] = Y[:,i] - Y[:,i].mean()
+        R[i,:] = R[i,:] - R[i,idx].mean()
+    
+    # SVD
+    # Note that each column is a neuron, 
+    # and each row is a time point
+    U,S,Vh = scipy.linalg.svd(Y)
+    
+    # each row in Vh is an eigenvector of the COV matrix;
+    # to get the PCs, we project R onto the eigenvectors:
+    PC = np.dot(Vh, R)[0:ndim,:]
+    V = S**2
+    
+    if len(pc_sign) > 0:
+        i = 0
+        for s in pc_sign:
+            PC[i,:] = PC[i,:] * s
+            i += 1
+
+
+    ## add figure
+    if pplot:
+        t = np.arange(0, nhypno) * dt
+
+        plt.figure()
+        axes_brs = plt.axes([0.2, 0.85, 0.7, 0.05])        
+        cmap = plt.cm.jet
+        my_map = cmap.from_list('brs', [[0, 0, 0], [0, 1, 1], [0.6, 0, 1], [0.8, 0.8, 0.8]], 4)
+        tmp = axes_brs.pcolorfast(t, [0, 1], np.array([M]), vmin=0, vmax=3)
+        tmp.set_cmap(my_map)
+        axes_brs.axis('tight')
+        sleepy._despine_axes(axes_brs)
+
+        if collapse:    
+            plt.axes([0.2, 0.2, 0.7, 0.6], sharex=axes_brs)
+            plt.plot(t, PC[:,:].T)
+            plt.xlim((t[0], t[-1]))
+            sns.despine()
+            plt.xlabel('Time (s)')
+            plt.ylabel('PC')
+
+    
+
+
+    return PC, V
+
+
+
 def kcut_idx(M, X, kcuts, dt=2.5):
     """
     Using the values defined in the mouse_config.txt file (field KCUT:), determine
@@ -3029,6 +3213,15 @@ def pc_reconstruction2(units, cell_info, time_idx=[], ndim=3, nsmooth=0, detrend
     PC[i,:] is the i-th PC
     
     Vh[i,:] are the coefficients of each neurons for PCi
+    
+    The firing rates of unit fr_i can be reconstructed using,
+    
+        fr_i = PC1 * c[0,i] + PC2 * c2[1,i] + ...
+    
+    which we rewrite as
+    
+        fr_i = PC1 * c1_i + PC2 * c2_i + ...
+    
 
 
     Parameters
@@ -3049,11 +3242,11 @@ def pc_reconstruction2(units, cell_info, time_idx=[], ndim=3, nsmooth=0, detrend
         DESCRIPTION. The default is False.
     pc_sign : TYPE, optional
         DESCRIPTION. The default is [].
-    dt : TYPE, optional
-        DESCRIPTION. The default is 2.5.
-    kcut : tuple/list, optional
-        tuple or list with two elements.
-        Discard the time interval ranging from kcut[0] to kcut[1] seconds
+    dt : float, optional
+        Time bin for firing rates. The default is 2.5.
+    kcuts : tuple/list, optional
+        list of tuples.
+        Discard the time interval ranging from kcuts[i][0] to kcuts[i][1] seconds
     sign_plot: bool
         It True, plot PCs after multiplying with pc_sign
     pearson: bool
@@ -3061,16 +3254,20 @@ def pc_reconstruction2(units, cell_info, time_idx=[], ndim=3, nsmooth=0, detrend
         The r value and p value are reported in the returned DataFrame df;
         columns r1, r2,... and p1, p2, ...
 
+
     Returns
     -------
-    C : TYPE
+    C : np.array with dimension: number of units x $ndim
+        Coefficient c1_i, c_i, ... for each unit i.
         DESCRIPTION.
-    unitIDs : TYPE
-        DESCRIPTION.
-    df : TYPE
-        DESCRIPTION.
-    Yhat : TYPE
-        DESCRIPTION.
+    df : pd.DataFrame with columns ['c1', 'c2', 'ID', 'r1', 'p1', 'r2', 'p2']
+        c1, c2, ... are the coefficient c1, c2 for each PC. ID are the unit IDs
+        p1, p2, ... and r1, r2, ... are the p-values and r coefficients, when fitting
+        the firing rates using PC1, PC2, ... using linear regression.
+    units : pd.DataFrame
+        Original firing rates, each columns corresponds to one unit.
+    units_hat : pd.DataFrame
+        Reconstructed firing rates, each colums corresponds to one unit.
 
     """
     nhypno = units.shape[0]
@@ -3542,9 +3739,7 @@ def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], min_laser=20, pzscore
 
             idxs = idxs_rnd 
             idxe = idxe_rnd                                       
-            
-        
-
+                    
         laser_idx = []
         for (si,sj) in zip(idxs, idxe):
             laser_idx += list(range(si,sj+1))
@@ -6759,10 +6954,8 @@ def state_correlation_avg_fine(ids1, ids2, mouse, kcuts=[], istate=3, win=60, tb
         units = np.load(os.path.join(tr_path,'lfp_1k_train.npz'))     
 
 
-
     unitIDs = [unit for unit in list(units.keys()) if '_' in unit]
     unitIDs = [unit for unit in unitIDs if re.split('_', unit)[1] == 'good']
-
     
     dt = dt / NUP
     M = upsample_mx(M, NUP)
@@ -8638,7 +8831,6 @@ def pc_infraslow(PC, M, mouse, kcuts=(), dt=2.5, nsmooth=0, ma_thr=20,
     
     path = load_config(config_file)[mouse]['SL_PATH']
     ppath, file = os.path.split(path)
-    #M = sleepy.load_stateidx(ppath, file)[0]
     min_dur = np.max([win*2.5, min_dur])
 
     # load frequency band
@@ -8753,7 +8945,7 @@ def pc_infraslow(PC, M, mouse, kcuts=(), dt=2.5, nsmooth=0, ma_thr=20,
 def bandpass_corr_state(mouse, band, ids=[], mouse_config='mouse_config.txt', 
                         sr=0, sdt=2.5, fft_win=2.5, perc_overlap=0.8, pnorm_spec=True,
                         win=120, state=3, ma_thr=20, 
-                        cc_max_win=0,
+                        cc_max_win=0, sign='no',
                         rm_flag=False):
     """
     Correlate band in EEG spectrogram with unit activity.
@@ -8765,6 +8957,8 @@ def bandpass_corr_state(mouse, band, ids=[], mouse_config='mouse_config.txt',
     the downsampled firing rate vector. The location of the 1kHz spike trains is
     specified in the file $mouse_config (using the flag 'TR_PATH:').
     
+    Correlates spike train with EEG power band
+
 
     Parameters
     ----------
@@ -8806,7 +9000,12 @@ def bandpass_corr_state(mouse, band, ids=[], mouse_config='mouse_config.txt',
     a = load_config(mouse_config)[mouse]
     ppath, name = os.path.split(a['SL_PATH'])
     tr_path = a['TR_PATH']
-    tr_units = np.load(os.path.join(tr_path,'1k_train.npz')) 
+    #tr_units = np.load(os.path.join(tr_path,'1k_train.npz')) 
+    if os.path.isfile(os.path.join(tr_path,'1k_train.npz')):
+        tr_units = np.load(os.path.join(tr_path,'1k_train.npz')) 
+    else:
+        tr_units = np.load(os.path.join(tr_path,'lfp_1k_train.npz'))     
+
     
     # calculate and load powerspectrum
     if sr==0:
@@ -8855,7 +9054,7 @@ def bandpass_corr_state(mouse, band, ids=[], mouse_config='mouse_config.txt',
     unitIDs = [unit for unit in list(tr_units.keys()) if '_' in unit]
     unitIDs = [unit for unit in unitIDs if re.split('_', unit)[1] == 'good']
     
-    if ids == []:
+    if len(ids) == 0:
         ids = unitIDs
 
     t = np.arange(-iwin, iwin+1) * dt
@@ -8863,7 +9062,6 @@ def bandpass_corr_state(mouse, band, ids=[], mouse_config='mouse_config.txt',
     data = []
     frd = []
     for unit in ids:
-        print(unit)
         tr = tr_units[unit]*1000
         trd = downsample_overlap(tr, nwin, noverlap)
         frd.append(trd)
@@ -8895,13 +9093,12 @@ def bandpass_corr_state(mouse, band, ids=[], mouse_config='mouse_config.txt',
             ii = np.arange(len(xx) / 2 - iwin, len(xx) / 2 + iwin + 1)
             ii = [int(i) for i in ii]
 
-            #pdb.set_trace()            
             ii = np.concatenate((np.arange(m-iwin-1, m), np.arange(m, m+iwin, dtype='int')))
             # note: point ii[iwin] is the "0", so xx[ii[iwin]] corresponds to the 0-lag correlation point
             CC.append(xx[ii])
             
         CC = np.array(CC)
-        data += zip([unit]*n, t, CC.mean(axis=0))
+        data += zip([unit]*n, t, np.nanmean(CC, axis=0))
     
     df = pd.DataFrame(data=data, columns=['ID', 't', 'cc'])
     FRd = np.array(frd)
@@ -8913,7 +9110,13 @@ def bandpass_corr_state(mouse, band, ids=[], mouse_config='mouse_config.txt',
         dfs = df[(df.ID==unit) & (df.t>=-cc_max_win) & (df.t<=cc_max_win)]
         t = np.array(dfs.t)
         cc = np.array(dfs['cc'])
-        i = np.argmax(np.abs(cc))
+        
+        if sign == 'no':
+            i = np.argmax(np.abs(cc))
+        elif sign == '-':
+            i = np.argmin(cc)
+        else:
+            i = np.argmax(cc)
         tmax = t[i]
         mmax = cc[i]
         
