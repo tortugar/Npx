@@ -765,38 +765,46 @@ def fr_transitions(units, M, unit_info, transitions, pre, post, si_threshold, sj
 
     Parameters
     ----------
-    units : TYPE
-        DESCRIPTION.
-    M : TYPE
-        DESCRIPTION.
-    unit_info : TYPE
-        DESCRIPTION.
-    transitions : TYPE
-        DESCRIPTION.
-    pre : TYPE
-        DESCRIPTION.
-    post : TYPE
-        DESCRIPTION.
-    si_threshold : TYPE
-        DESCRIPTION.
-    sj_threshold : TYPE
-        DESCRIPTION.
-    ma_thr : TYPE, optional
-        DESCRIPTION. The default is 10.
-    ma_rem_exception : TYPE, optional
-        DESCRIPTION. The default is False.
-    sdt : TYPE, optional
-        DESCRIPTION. The default is 2.5.
-    pzscore : TYPE, optional
-        DESCRIPTION. The default is True.
-    sf : TYPE, optional
-        DESCRIPTION. The default is 0.
-    ma_mode : TYPE, optional
-        DESCRIPTION. The default is False.
+    units : pd.DataFrame
+        Each columns, one unit.
+    M : np.array
+        hypnogram; 1 - REM, 2 - Wake, 3 - NREM.
+    unit_info : pd.DataFrame
+        Additional unit information, such as brain_region. Units are referenced
+        using the same IDs as in @units
+    transitions : list of tuples (2 element lists)
+        Specific the transitions to be calculated. 
+        REM - 1, Wake - 2, NREM - 3;
+        So a NREM to REM transition is specified as [3,1]
+    pre : float
+        time before transition.
+    post : float
+        time after transition.
+    si_threshold : list with 3 floats
+        For example, if we're looking at a NREM to REM transition, for how long
+        should the mouse be in NREM before the actual transition. Specify for
+        NREM, Wake, REM the minimum preceding bout duration
+    sj_threshold : list with 3 floats
+        For example, if we're looking at a NREM to REM transition, for how long
+        should the mouse be in NREM before the actual transition. Specify for
+        NREM, Wake, REM the minimum following bout duration.
+    ma_thr : TYPE, float
+        Wake sequences <= $ma_thr s are interpreted as NREM (3). The default is 10.
+    ma_rem_exception : bool, optional
+        If True, then the MA rule does not apply for wake episodes directly following REM. 
+        The default is False.
+    sdt : float, optional
+        Time binning for firing rates and hypnogram. The default is 2.5.
+    pzscore : bool, optional
+        If True, z-score firing rates. The default is True.
+    sf : float, optional
+        Standard deviation for Gaussian kernel to smooth firing rates. The default is 0.
+    ma_mode : bool, optional
+        If True, treat MAs as their own brain state. 
     attributes : list of strings, optional
-        Allows you to transfer columns in DataFrame $unit_info to the returned DataFrame. The default is [].
-    kcuts : TYPE, optional
-        DESCRIPTION. The default is [].
+        Allows you to transfer columns in DataFrame @unit_info to the returned DataFrame @df. The default is [].
+    kcuts : list of tuples or lists with two elements.
+        Discard the time interval ranging from kcuts[i][0] to kcuts[i][1] seconds
     pspect : bool
         if True, also claculate EEG spectrogram
     mouse : str,
@@ -809,8 +817,13 @@ def fr_transitions(units, M, unit_info, transitions, pre, post, si_threshold, sj
 
     Returns
     -------
-    df : TYPE
-        DESCRIPTION.
+    df : pd.DataFrame 
+        with columns ['ID', 'time', 'fr', 'trans'], i.e.
+        unit IDs, time point relative to transition, firing rate value, transition type
+        encoded as NR, NW etc.        
+    mx_transspe : dict: Transition type --> np.array
+        The dict holds for each calculated transition (encoded as NR, NW, etc.)
+        and each unit (axis=2) the average spectrogram during that transition.
 
     """
 
@@ -867,9 +880,7 @@ def fr_transitions(units, M, unit_info, transitions, pre, post, si_threshold, sj
         sp_mean = SP.mean(axis=1)
         SP = np.divide(SP, np.tile(sp_mean, (SP.shape[1], 1)).T)
         SP[:,tidx]
-        
-        
-        
+                        
         unit_transspe = {}
         mx_transspe = {}
         for (si,sj) in transitions:
@@ -916,23 +927,14 @@ def fr_transitions(units, M, unit_info, transitions, pre, post, si_threshold, sj
                     if ipre <= ti < len(M)-ipost and len(s)*sdt >= si_threshold[si-1] and len(sj_idx)*sdt >= sj_threshold[sj-1]:
                         act = fr[ti-ipre+1:ti+ipost+1]
                         # Note: ti+1 is the first time point of the "post" state
-
                         # i = 10, ipre = 2, ipost = 2
                         # 8,9,10
                         # np.arange(8,12) = 8,9,10,11,12
 
                         if pspec:                        
-                            #spe_si = SP[ifreq,ti-ipre+1:ti+1]
-                            #spe_sj = SP[ifreq,ti+1:ti+ipost+1]
-                            #spe = np.concatenate((spe_si, spe_sj), axis=1)
                             spe = SP[ifreq, ti-ipre+1:ti+ipost+1]                            
                             unit_transspe[sid][unit].append(spe)
                             
-                        #spm_si = emg_ampl[ti-ipre+1:ti+1]
-                        #spm_sj = emg_ampl[ti+1:ti+ipost+1]
-                        #spm = np.concatenate((spm_si, spm_sj))
-
-                        #t = np.arange(-ipre*sdt, ipost*sdt - sdt + sdt / 2, sdt)
                         new_data = zip([unit]*m, t, act, [sid]*m)                                                
                         new_data = [list(x) + attr for x in list(new_data)]
 
@@ -987,13 +989,8 @@ def fr_transitions_stats(df_trans, base_int, unit_avg=True, dt=2.5, time_mode='m
         ms_ids = [m + '-' + i for m,i in zip(mice, ids)]
         df_trans['ms_id'] = ms_ids
 
-
     ids = list(df_trans.ms_id.unique())
-
-    #df_trans = df_trans[df_trans.trans == trans]
     dfm_trans = df_trans[['ms_id', 'time', 'fr', 'trans']].groupby(['ms_id', 'time', 'trans',]).mean().reset_index()
-
-    #t = np.array(dfm_trans.loc[df_trans.ms_id == ids[0], 'time'])
     t = dfm_trans.time.unique()
     
     # number of bins per time bin
@@ -1067,7 +1064,7 @@ def pc_transitions(PC, M, transitions, pre, post, si_threshold, sj_threshold,
     sdt : float, optional
         time bin duration in seconds of one brain state. The default is 2.5.
     ma_mode : bool, optional
-        If True, then specifically analysis transitions from and to MAs. 
+        If True, then specifically analyze transitions from and to MAs. 
         Note that when considering transitions from and to NREM, MAs are 
         considered as NREM sleep.
     kcuts : TYPE, optional
