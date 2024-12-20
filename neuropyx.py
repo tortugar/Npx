@@ -826,7 +826,7 @@ def fr_transitions(units, M, unit_info, transitions, pre, post, si_threshold, sj
         and each unit (axis=2) the average spectrogram during that transition.
 
     """
-
+    dt = 2.5
     states = {1:'R', 2:'W', 3:'N', 4:'M'}
     
     # cut out kcuts: ###############
@@ -925,6 +925,7 @@ def fr_transitions(units, M, unit_info, transitions, pre, post, si_threshold, sj
                     # the indices of state sj are sj_idx
     
                     if ipre <= ti < len(M)-ipost and len(s)*sdt >= si_threshold[si-1] and len(sj_idx)*sdt >= sj_threshold[sj-1]:
+                        rem_ID = '%d' % (s[0])
                         act = fr[ti-ipre+1:ti+ipost+1]
                         # Note: ti+1 is the first time point of the "post" state
                         # i = 10, ipre = 2, ipost = 2
@@ -934,13 +935,16 @@ def fr_transitions(units, M, unit_info, transitions, pre, post, si_threshold, sj
                         if pspec:                        
                             spe = SP[ifreq, ti-ipre+1:ti+ipost+1]                            
                             unit_transspe[sid][unit].append(spe)
-                            
-                        new_data = zip([unit]*m, t, act, [sid]*m)                                                
+                        
+                        dur_post = len(sj_idx)*dt
+                        new_data = zip([unit]*m, t, act, [sid]*m, [rem_ID]*m, [dur_post]*m)                                                
                         new_data = [list(x) + attr for x in list(new_data)]
+
+                        
 
                         data += new_data
 
-    df = pd.DataFrame(data=data, columns=['ID', 'time', 'fr', 'trans'] + attributes)
+    df = pd.DataFrame(data=data, columns=['ID', 'time', 'fr', 'trans', 'remID', 'dur_post'] + attributes)
 
     if pspec:
         for (si,sj) in transitions:
@@ -2044,9 +2048,6 @@ def sleep_components_fine(ids, wake_dur=600, wake_break=60, ndim=3, nsmooth=0,
             sns.despine()
             plt.xlabel('Time (s)')
             plt.ylabel('PC')
-
-    
-
 
     return PC, V
 
@@ -4180,7 +4181,7 @@ def plot_trajectories(PC, M, pre, post, istate=1, dt=2.5, ma_thr=10, ma_rem_exce
 
 def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, ax='', nrem2wake=False, nrem2wake_step=4,
                    pscatter=True, local_coord=False, outline_std=True, rem_onset=False, rem_offset=False, rem_offset_only_nrem=False, show_avgtraj=False,
-                   pre_win=30, post_win=0, rem_min_dur=0, break_out=True, break_in=False, prefr=False, scale=1.645):
+                   pre_win=30, post_win=0, rem_min_dur=0, break_out=True, break_in=False, prefr=False, scale=1.645, pzscore_pc=False):
     """
     Plot for each time point the population activity within the 2D state space spanned
     by PC[0,:] and PC[1,:]
@@ -4241,8 +4242,8 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
         $scale == 1.645 outlines the area (of the fitted Gaussian)
         that comprises 90% of the data distribution.                    
         $scale == 1.96 outlines 95% of the distribution
-        
-    # ax, df_breakout, df_breakin, df_ampl
+    pzscore_pc: bool
+        If True, zscore PCs.
         
     Returns
     -------
@@ -4279,6 +4280,11 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
 
     nhypno = np.min((len(M), PC.shape[1]))
     M = M[0:nhypno]
+
+    # zscore PCs:
+    if pzscore_pc:
+        for i in range(PC.shape[0]):
+            PC[i,:] = (PC[i,:] - PC[i,:].mean()) / PC[i,:].std()
 
     # flatten out MAs
     if ma_thr>0:
@@ -4465,7 +4471,6 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
             sm = _jet_plot(pc1, pc2, ax, lw=2, cmap='magma')
             
             plt.plot(PC[0,r+1], PC[1,r+1], '*', color=bs_map['wake'], markersize=10, zorder=3)
-
             
         cbar = plt.colorbar(sm, ax=ax, orientation='vertical', pad=0.05, shrink=0.6)  # pad adjusts the distance between the plot and colorbar
         sm.set_clim(-pre_win, post_win)
@@ -4512,9 +4517,17 @@ def pc_state_space(PC, M, ma_thr=10, ma_rem_exception=False, kcuts=[], dt=2.5, a
             tmp1 = PC[0,r-ipre_win:r+1]
             tmp2 = PC[1,r-ipre_win:r+1]
             
-            data_ampl += [[tmp1.max(), tmp2.max()]]
+            # calculation current REM duration
+            state = M[r]
+            ii = r
+            while ii < len(M) and M[ii] == state:
+                ii = ii+1
+            dur = (ii-r) * dt
+            # END #################################            
+            #data_ampl += [[tmp1.max(), tmp2.max(), dur]]
+            data_ampl += [[tmp1.max(), tmp2.max(), dur]]
             
-        df_ampl = pd.DataFrame(data=data_ampl, columns=['pc1', 'pc2'])
+        df_ampl = pd.DataFrame(data=data_ampl, columns=['pc1', 'pc2', 'dur_post'])
         
         # Alternative way of calculating the eigenvectors of the
         # covariance matrix:            
@@ -4800,6 +4813,7 @@ def _jet_plot(x, y, ax, color='', cmap="YlOrBr", lw=1):
     return sm  
 
 
+
 def mahalanobis_distance(point, mean, covariance_matrix):
     diff = point - mean
     inv_covariance_matrix = np.linalg.inv(covariance_matrix)
@@ -4948,7 +4962,6 @@ def irem_trends(units, M, nsmooth=0, pzscore=False, kcut=[], irem_dur=120, wake_
         
     dfm = pd.DataFrame(data=data, columns=['ID', 's', 'r', 'p'])
 
-
     return df, dfm
 
 
@@ -4991,7 +5004,6 @@ def rem_prepost(units, M, pzscore=True,  ma_thr=20, ma_rem_exception=True, kcuts
                     M[s] = 3
     ###########################################################################    
     
-    
     R = np.zeros((units.shape[1], len(tidx)))
     for i, unit in enumerate(unitIDs):
         tmp = sleepy.smooth_data(np.array(units[unit]),nsmooth)
@@ -4999,7 +5011,6 @@ def rem_prepost(units, M, pzscore=True,  ma_thr=20, ma_rem_exception=True, kcuts
             R[i,:] = (tmp[tidx] - tmp[tidx].mean()) / tmp[tidx].std()
         else:
             R[i,:] = tmp[tidx]
-
 
     seq = sleepy.get_sequences(np.where(M==1)[0])
     data = []
@@ -7664,7 +7675,6 @@ def plot_firingrates_withemg(units, cell_info, ids, mouse,
         axes_frs.set_xticks([0.5,1.5,2.5])
         axes_frs.set_xticklabels(['R', 'W', 'N'])
         axes_frs.set_xlim([0, 3])
-        #axes_frs.set_ylim([0, fr.shape[0]])
         sns.despine()
     
         offset = 0
@@ -7884,8 +7894,8 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
         If True, normalize EEG spectrogram. 
     box_filt : tuple or two element list, optional
         Filter EEG spectrogram using box filder . If [], no filtering is applied.
-    fmax : TYPE, optional
-        DESCRIPTION. The default is 20.
+    fmax : float, optional
+        Maximum frequency on EEG spectrogram. The default is 20.
     vm : tuple
         lower and upper range color color range for EEG spectrogram colormap.
         If vm==[], the colorange is set automatically
@@ -7951,6 +7961,13 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
     if pnorm_spec:
         sp_mean = SP.mean(axis=1)
         SP = np.divide(SP, np.tile(sp_mean, (SP.shape[1], 1)).T)
+
+
+    # NEW 11/12/24:
+    if len(M) > units.shape[0]:
+        M = M[0:units.shape[0]]
+    ####################
+
         
     # cut out kcuts: ###############
     tidx = kcut_idx(M, units, kcuts, dt=dt)
@@ -7958,6 +7975,7 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
     units = units.iloc[tidx,:]
     SP = SP[:,tidx]
     ################################
+    
     
     # set istart and iend
     if tend == -1:
@@ -7994,7 +8012,9 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
     nhypno = np.min((len(M), ntime))
     M = M[0:nhypno]        
     t = np.arange(0, len(M))*dt        
+    #############################
     # Axes for hypnogram
+    #############################
     xrange = 0.7
     axes_brs = plt.axes([0.1, 0.95, xrange, 0.03])
     
@@ -8010,7 +8030,9 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
     axes_brs.spines["bottom"].set_visible(False)
     axes_brs.spines["left"].set_visible(False)
 
+    ################################
     # plot spectrogram
+    ################################
     # calculate median for choosing right saturation for heatmap
     med = np.median(SP.max(axis=0))
     if len(vm) == 0:
@@ -8020,7 +8042,7 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
     # axes for colorbar
     axes_cbar = plt.axes([0.83, 0.85, 0.015, 0.08])
 
-    im = axes_spec.pcolormesh(t, freq[ifreq], SP[ifreq,:], vmin=vm[0], vmax=vm[1], cmap='jet')
+    im = axes_spec.pcolorfast(t, freq[ifreq], SP[ifreq,:], vmin=vm[0], vmax=vm[1], cmap='jet')
     sleepy.box_off(axes_spec)
     axes_spec.axes.get_xaxis().set_visible(False)
     axes_spec.spines["bottom"].set_visible(False)
@@ -8047,7 +8069,7 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
     axes_emg.set_ylabel('EMG\n($\mathrm{\mu}$V)')
     # END[Show EMG amplitude]
 
-    # axes for firing rates
+    # axes for firing rates: ax_fr
     yrange_fr_total = 0.73
 
     if yrange_fr < 0:    
@@ -8055,7 +8077,8 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
     else:
         yrange = yrange_fr
     ax_fr = plt.axes([0.1, 0.05+yrange_fr_total-yrange, xrange, yrange], sharex=axes_brs)
-    ax_cbfr = plt.axes([0.83, 0.1+yrange*0.08+yrange_fr_total-yrange, 0.015, yrange*0.5])
+    # axes for the colorbar
+    ax_cbfr = plt.axes([0.86, 0.1+yrange*0.08+yrange_fr_total-yrange, 0.015, yrange*0.5])
 
     if len(vm_fr) == 0:
         vm_fr[0] = np.percentile(fr, 1)
@@ -8067,7 +8090,6 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
         cmap_fr = 'magma'
     im = ax_fr.pcolorfast(t, y, fr, vmin=vm_fr[0], vmax=vm_fr[1], cmap=cmap_fr)
     sleepy.box_off(ax_fr)
-    #ax_fr.set_xlabel('Time (s)')
     ax_fr.set_ylabel('Unit no.')    
     cb = plt.colorbar(im, cax=ax_cbfr, pad=0.0, aspect=10.0, location='right')
     cb.set_label('FR (z-scored)')
@@ -8097,7 +8119,8 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
             reg_code[i] = reg2int[region]
         
         # Axes for brain region colorcode 
-        ax_rg = plt.axes([0.82, 0.05, 0.02, yrange])
+        #ax_rg = plt.axes([0.82, 0.05, 0.02, yrange])
+        ax_rg = plt.axes([0.82, 0.05+yrange_fr_total-yrange, 0.02, yrange])                
         #ax_fr = plt.axes([0.1, 0.05, xrange, yrange], sharex=axes_brs)
 
         A = np.zeros([nunits,1])
@@ -8106,7 +8129,7 @@ def plot_firingrates_map(units, cell_info, ids, mouse, config_file, kcuts=[],
         sleepy._despine_axes(ax_rg)
             
         # Add axes for brain region legends
-        ax_lb = plt.axes([0.85, 0.1, 0.1, yrange*0.25])
+        ax_lb = plt.axes([0.85, 0.05+yrange_fr_total-yrange, 0.1, yrange*0.25])
         for k in reg2int:
             i = reg2int[k]
             ax_lb.plot([0.5, 1], [i,i], color=clrs[i], lw=2)
@@ -8391,7 +8414,7 @@ def plot_firingrates_map2(cell_info, ids, mouse, config_file, kcuts=[],
 
 
 
-def downsample_fr(mouse, config_file, ndown, ids=[]):
+def downsample_fr(mouse, config_file, ndown, ids=[], dtype=''):
     """
     Downsample 1ms firing rates by factor $ndown, and
     return as np.array, with each row corresponding to a unit
@@ -8441,6 +8464,8 @@ def downsample_fr(mouse, config_file, ndown, ids=[]):
             tmp = sleepy.downsample_vec(np.array(units[unit]), ndown)            
             R[i,:] = tmp
             processed_ids.append(unit)
+        if dtype != '':
+            R = R.astype(np.uint8)
         so.savemat(fr_file, {'R':R, 'ndown':ndown, 'ID':np.array(processed_ids)})
         print('saving spike trains...')
         print('done.')
@@ -8450,6 +8475,78 @@ def downsample_fr(mouse, config_file, ndown, ids=[]):
         processed_ids = list(tmp['ID'])
         processed_ids = [p.strip() for p in processed_ids]
 
+    return R, processed_ids
+
+
+
+def downsample_count(mouse, config_file, ndown, ids=[], dtype='uint8'):
+    """
+    Similar to function &downsample_fr, but does downsampling by summing number of
+    spikes in consecutive bins instead of averaging
+    
+    Downsample 1ms firing rates by factor $ndown, and
+    return as np.array, with each row corresponding to a unit
+
+    Parameters
+    ----------
+    units : TYPE
+        DESCRIPTION.
+    tr_path : TYPE
+        DESCRIPTION.
+    ndown : TYPE
+        DESCRIPTION.
+    ids : TYPE
+        List of unit IDs. If empty, process all units in $units.
+
+
+    Returns
+    -------
+    R : TYPE
+        DESCRIPTION.
+    processsed_ids: list
+        list of unit IDs in np.array R (row by row)
+
+    """   
+    tr_path = load_config(config_file)[mouse]['TR_PATH']
+    try:
+        units = np.load(os.path.join(tr_path,'lfp_1k_train.npz')) 
+    except:
+        units = np.load(os.path.join(tr_path,'1k_train.npz')) 
+        
+    # Selects IDs of units
+    if len(ids) == 0:
+        ids = [unit for unit in list(units.keys()) if '_' in unit]
+        ids = [unit for unit in ids if re.split('_', unit)[1] == 'good']
+        unitIDs = ids
+    else:
+        unitIDs = ids
+                
+    nsample = int(len(units[unitIDs[0]])/ndown)
+    R = np.zeros((len(units), nsample), dtype=dtype)
+    fr_file = os.path.join(tr_path, 'fr_fine_ndown%d.npz' % ndown)
+    if not os.path.isfile(fr_file):
+        print('downsampling spike trains...')
+        processed_ids = []
+        for i, unit in enumerate(unitIDs):
+            print(unit)
+            tmp = downsample_vec(np.array(units[unit]), ndown, mode='sum')            
+            R[i,:] = tmp
+            processed_ids.append(unit)
+        if dtype != '':
+            R = R.astype(dtype)
+        #so.savemat(fr_file, {'R':R, 'ndown':ndown, 'ID':np.array(processed_ids)})
+        np.savez(fr_file, R=R, ndown=ndown, ID=np.array(processed_ids))
+        
+        print('saving spike trains...')
+        print('done.')
+    else:
+        print('file exists; loading data')
+        tmp = scipy.load(fr_file)
+        R = tmp['R']
+        processed_ids = list(tmp['ID'])
+        processed_ids = [p.strip() for p in processed_ids]
+
+    
     return R, processed_ids
         
 
@@ -9496,7 +9593,8 @@ def laser_triggered_train(ppath, name, train, pre, post, nbin=1, offs=0, iters=1
         ax.add_patch(patches.Rectangle((0, 0), laser_dur, R.shape[0], 
                                        facecolor=[0.6, 0.6, 1], edgecolor=[0.6, 0.6, 1]))
 
-    return fr_pre, fr_lsr, fr, t
+    # 11/05/24 added parameter fr_post
+    return fr_pre, fr_lsr, fr_post, fr, t
     
 
 
@@ -9544,7 +9642,7 @@ def downsample_mx(X, nbin):
 
 
 
-def downsample_vec(x, nbin):
+def downsample_vec(x, nbin, mode='mean'):
     """
     y = downsample_vec(x, nbin)
     downsample the vector x by replacing nbin consecutive 
@@ -9560,7 +9658,10 @@ def downsample_vec(x, nbin):
         idx = list(range(i, int(n_down*nbin), int(nbin)))
         x_down += x[idx]
 
-    return x_down / nbin
+    if mode == 'mean':
+        return x_down / nbin
+    else:
+        return x_down
 
 
 
