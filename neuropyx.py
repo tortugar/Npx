@@ -2065,7 +2065,6 @@ def kcut_idx(M, X, kcuts, dt=2.5):
     @return tidx: np.array, list of indices in @M used for further calculation, i.e. indices 
             that are NOT within the ranges defined in @kcuts.
     """
-
     #n = np.max(X.shape)
     #nhypno = np.min((len(M), n))
     nhypno = len(M)    
@@ -2102,8 +2101,6 @@ def kcut_idx2(M, kcuts, X = [], dt=2.5):
     @return tidx: np.array, list of indices in @M used for further calculation, i.e. indices 
             that are NOT within the ranges defined in @kcuts.
     """
-
-
     nhypno = len(M)    
     if len(X) > 0:
         n = np.max(X.shape)
@@ -5468,7 +5465,7 @@ def remrem_purenrem(units, cell_info, M, nsections=5, nsections_rem=0, nsmooth=0
                 mcut2 = np.zeros(mcut.shape)
                 mcut2[mcut==3] = dt
                 mcut_csum = np.cumsum(mcut2)
-                # isplit is the first point (index) that is not anymore in the refractory period
+                # isplit is the first point (index) that is still in the refractory period
                 try:
                     isplit = ((np.where(mcut_csum >= refr_dur)[0][0])-1) * 1
                     refr_perc = dt * isplit / idur
@@ -5508,6 +5505,159 @@ def remrem_purenrem(units, cell_info, M, nsections=5, nsections_rem=0, nsmooth=0
     return df_trials, dfm, df_stats                
 
 
+
+def remrem_refr(units, cell_info, M, nsections_refr=10, nsections_perm=20, nsmooth=0, pzscore=False, kcuts=[], 
+                    irem_dur=120, wake_prop_threshold=0.5, ma_thr=10, border=20, ma_rem_exception=False):
+    refr_func = refr_period()
+    
+    dt = 2.5
+    border = int(border/dt)
+
+    unitIDs = [unit for unit in units.columns if '_' in unit]
+    unitIDs = [unit for unit in unitIDs if re.split('_', unit)[1] == 'good']
+
+    nhypno = np.min((len(M), units.shape[0]))
+    M = M[0:nhypno]
+    tidx = np.arange(0, nhypno)
+            
+    # KCUT ####################################################################
+    # get the indices (in brainstate time) that we're going to completely discard:
+    if len(kcuts) > 0:
+        kidx = []
+        for kcut in kcuts:
+            a = int(kcut[0]/dt)
+            b = int(kcut[-1]/dt)
+            if b > len(M):
+                b = len(M)
+            kidx += list(np.arange(a, b))
+        
+        tidx = np.setdiff1d(tidx, kidx)
+        M = M[tidx]
+        nhypno = len(tidx)
+    ###########################################################################    
+        
+    # flatten out MAs #########################################################
+    if ma_thr>0:
+        seq = sleepy.get_sequences(np.where(M==2)[0])
+        for s in seq:
+            if np.round(len(s)*dt) <= ma_thr:
+                if ma_rem_exception:
+                    if (s[0]>1) and (M[s[0] - 1] != 1):
+                        M[s] = 3
+                else:
+                    M[s] = 3
+    ###########################################################################    
+    
+    
+    R = np.zeros((units.shape[1], len(tidx)))
+    for i, unit in enumerate(unitIDs):
+        tmp = sleepy.smooth_data(np.array(units[unit]),nsmooth)
+        if pzscore:
+            R[i,:] = (tmp[tidx] - tmp[tidx].mean()) / tmp[tidx].std()
+        else:
+            R[i,:] = tmp[tidx]
+
+    seq = sleepy.get_sequences(np.where(M==1)[0])
+    data = []
+    ev = 0    
+    # go over all units
+    for iunit,ID in enumerate(unitIDs):
+        fr = R[iunit,:]
+        region = cell_info[(cell_info.ID == ID)]['brain_region'].iloc[0]
+        
+        # go over all inter-REM episodes
+        if len(seq) >= 2:
+            for (si, sj) in zip(seq[0:-1], seq[1:]):                
+                rem_id = si[0]
+                # the refractory duration:
+                rem_pre = len(si)*dt
+
+                refr_dur = np.exp(refr_func(rem_pre))
+
+                irem_idx = np.arange(si[-1]+1, sj[0]-border, dtype='int')                
+
+                                
+                # if inter-REM is too short, or if there's too much of wake, just continue with 
+                # next inter-REM interval
+                widx = np.where(M[irem_idx] == 2)[0]
+                if len(irem_idx) * dt < irem_dur or len(widx) / len(irem_idx)  > wake_prop_threshold:
+                    continue
+
+
+                nrem_idx = np.where(M == 3)[0]
+                inrem_idx = np.intersect1d(irem_idx, nrem_idx)
+                
+                if len(irem_idx) == 0:
+                    continue
+
+                # m - number of bins during inter-REM
+                m = len(inrem_idx)                
+                #M_up = upsample_mx(M[inrem_idx], nsections)
+                #M_up = np.round(M_up)
+                #fr_up = upsample_mx(fr[inrem_idx], nsections)
+    
+                # single_event_nrem = []
+                # for p in range(nsections):
+                #     # for each m consecutive bins calculate average NREM activity
+                #     mi = list(range(p*m, (p+1)*m))                        
+                #     nrem_fr = np.nanmean(fr_up[mi])
+                #     single_event_nrem.append(nrem_fr)
+    
+    
+                #Total NREM duration during inter-REM duration in seconds (!)
+                idur = len(inrem_idx)*dt
+                
+                mcut = M[inrem_idx]
+                
+                mcut2 = np.zeros(mcut.shape)
+                mcut2[mcut==3] = dt
+                mcut_csum = np.cumsum(mcut2)
+                
+                #pdb.set_trace()
+                # isplit is the first point (index) that is still in the refractory period
+                #print(refr_dur)
+                
+                if refr_dur > mcut_csum[-1]:
+                    continue
+                
+                isplit = ((np.where(mcut_csum >= refr_dur)[0][0])-1) * 1
+                
+                
+                fr_refr_up = upsample_mx(fr[irem_idx[0:isplit]], nsections_refr)
+                fr_perm_up = upsample_mx(fr[irem_idx[isplit:]], nsections_perm)
+                
+                single_event_refr = []
+                m = len(irem_idx[0:isplit])
+                for p in range(nsections_refr):
+                    # for each m consecutive bins calculate average NREM activity
+                    mi = list(range(p*m, (p+1)*m))                        
+                    nrem_fr = np.nanmean(fr_refr_up[mi])
+                    single_event_refr.append(nrem_fr)
+
+                single_event_perm = []
+                m = len(irem_idx[isplit:])
+
+                for p in range(nsections_perm):
+                    # for each m consecutive bins calculate average NREM activity
+                    mi = list(range(p*m, (p+1)*m))                        
+                    nrem_fr = np.nanmean(fr_perm_up[mi])
+                    single_event_perm.append(nrem_fr)
+
+                                                
+                data += zip([ID]*nsections_refr, [rem_id]*nsections_refr, [ev]*nsections_refr, list(range(1, nsections_refr+1)), single_event_refr, ['refr']*nsections_refr, [idur]*nsections_refr, [region]*nsections_refr, [rem_pre]*nsections_refr)
+                data += zip([ID]*nsections_perm, [rem_id]*nsections_perm, [ev]*nsections_perm, list(range(1, nsections_perm+1)), single_event_perm, ['perm']*nsections_perm, [idur]*nsections_perm, [region]*nsections_perm, [rem_pre]*nsections_perm)
+
+
+                ev += 1
+    
+    df_trials = pd.DataFrame(columns = ['ID', 'rem_id', 'event', 'section', 'fr', 'state', 'idur', 'brain_region', 'rem_pre'], data=data)
+    dfm = df_trials.groupby(['ID', 'section', 'state', 'brain_region']).mean().reset_index()
+    dfm = dfm[['ID', 'section', 'fr', 'state', 'brain_region']]
+    
+    
+    return df_trials, dfm               
+
+    
 
 
 def fr_stateseq(units, M, ids=[], ma_thr=10, ma_rem_exception=True, kcuts=[], 
@@ -8917,7 +9067,7 @@ def pc_infraslow(PC, M, mouse, kcuts=(), dt=2.5, nsmooth=0, ma_thr=20,
     -------
     df : pd.DataFrame 
          with columns=['mouse', 'freq', 'pow', 'typ']
-        'freq' is the frequency vlaue
+        'freq' is the frequency value
         'pow' the power for the given frequency
         'mouse' is the given mouse name
         'typ' specifies the PC ('PC1', 'PC2', ...) or sigma power 'Spec' 
@@ -10462,3 +10612,83 @@ def corr_eeg(mouse, config_file='mouse_config.txt'):
     return ifirst_valley
 
 
+
+def pop_synchrony(R, win, dt):
+    iwin = int(win/dt)    
+    n = R.shape[1]
+    
+    nwin = int(np.ceil(n/iwin))
+    pop_r = np.zeros((nwin-1,))
+    for i in range(nwin-1):
+        rcut = R[:,i*iwin:(i+1)*iwin]
+        avg = rcut.mean(axis=0)
+        pop_mean = avg.mean()
+        pop_std  = avg.std()
+        
+        pop_r[i] = pop_std / pop_mean
+
+    t = np.arange(0, pop_r.shape[0])*win
+    return pop_r, t
+
+
+
+
+
+
+
+def pop_corr_pearson(R, win, dt):
+    import numpy as np
+    from tqdm import tqdm
+
+    iwin = int(win / dt)
+    n = R.shape[1]
+    nwin = int(np.ceil(n / iwin))
+    pop_corrs = np.zeros(nwin - 1)
+    num_neurons = R.shape[0]
+
+    for i in tqdm(range(nwin - 1)):
+        rcut = R[:, i * iwin:(i + 1) * iwin]
+        # Compute the Pearson correlation matrix for the current window
+        corr_matrix = np.corrcoef(rcut)
+        # Extract the upper-triangular part (unique pairwise correlations)
+        upper_tri_indices = np.triu_indices(num_neurons, k=1)
+        corr_values = corr_matrix[upper_tri_indices]
+        pop_corrs[i] = np.mean(corr_values)
+
+    t = np.arange(pop_corrs.shape[0]) * win
+    return pop_corrs, t
+
+
+
+def pop_corr_pearson2(R, win, dt, tol=1e-8):
+    import numpy as np
+    from tqdm import tqdm
+
+    iwin = int(win / dt)
+    n = R.shape[1]
+    nwin = int(np.ceil(n / iwin))
+    pop_corrs = np.zeros(nwin - 1)
+    num_neurons = R.shape[0]
+
+    for i in tqdm(range(nwin - 1)):
+        rcut = R[:, i * iwin:(i + 1) * iwin]
+        # Identify neurons with non-zero variance (using a tolerance)
+        stds = np.std(rcut, axis=1)
+        valid_rows = stds > tol
+        
+        # Check if there are at least two neurons left
+        if np.sum(valid_rows) < 2:
+            pop_corrs[i] = np.nan
+            continue
+
+        valid_rcut = rcut[valid_rows]
+        # Compute the full correlation matrix for the valid neurons
+        corr_matrix = np.corrcoef(valid_rcut)
+        # Extract the upper-triangular part (unique pairwise correlations)
+        upper_tri_indices = np.triu_indices(corr_matrix.shape[0], k=1)
+        corr_values = corr_matrix[upper_tri_indices]
+        # Use np.nanmean to compute the average while ignoring NaNs
+        pop_corrs[i] = np.nanmean(corr_values)
+
+    t = np.arange(pop_corrs.shape[0]) * win
+    return pop_corrs, t
