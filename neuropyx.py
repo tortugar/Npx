@@ -865,7 +865,6 @@ def fr_transitions(units, M, unit_info, transitions, pre, post, si_threshold, sj
     if pspec:
         path = load_config(config_file)[mouse]['SL_PATH']
         ppath, name = os.path.split(path)
-
         
         P = so.loadmat(os.path.join(ppath, name, 'sp_%s.mat' % name), squeeze_me=True)
         SP = P['SP']
@@ -1190,8 +1189,8 @@ def pc_transitions(PC, M, transitions, pre, post, si_threshold, sj_threshold,
 
 
 def pc_transitions_laser(mouse, PC, M, transitions, pre, post, si_threshold, sj_threshold, 
-                   ma_thr=10, ma_rem_exception=False, sdt=2.5, ma_mode=False, 
-                   kcuts=[], allowed_idx=[], pzscore_pc=True, config_file=''):
+                   ma_thr=10, ma_rem_exception=False, sdt=2.5, ma_mode=False, rnd_laser=False,
+                   kcuts=[], allowed_idx=[], pzscore_pc=True, config_file='', laser_dur=-1):
     """
     Compare spontaneous and laser-induced brain state transitions
 
@@ -1260,8 +1259,9 @@ def pc_transitions_laser(mouse, PC, M, transitions, pre, post, si_threshold, sj_
         
     ipre  = int(np.round(pre/sdt))
     ipost = int(np.round(post/sdt))
-    m = ipre + ipost
+    # m = ipre + ipost
     t = np.arange(-ipre, ipost) * sdt
+    m = len(t)
     
     # flatten out MAs
     if ma_thr>0:
@@ -1289,9 +1289,7 @@ def pc_transitions_laser(mouse, PC, M, transitions, pre, post, si_threshold, sj_
 
     if len(allowed_idx) == 0:
         allowed_idx = range(0, len(M))
-
         
-
     #######################################################################
     # get laser start and end index after excluding kcuts: ################
     ddir =  load_config(config_file)[mouse]['SL_PATH']
@@ -1303,14 +1301,50 @@ def pc_transitions_laser(mouse, PC, M, transitions, pre, post, si_threshold, sj_
 
     idxs, idxe = sleepy.laser_start_end(lsr)
     idxs = [int(i/nbin) for i in idxs]
-    idxe = [int(i/nbin) for i in idxe]
+    
+    if laser_dur == -1:
+        idxe = [int(i/nbin) for i in idxe]
+        b = [i for i in idxe if i in tidx]
+        a = [i for i in idxs if i in tidx]
+        b = np.array(b)
+        a = np.array(a)
+        
+        laser_dur = (np.mean(b-a) + 1) * dt
+        print('Laser duration: %f' % laser_dur)
+    else:
+        idxe = [(int(i + int(laser_dur/dt))) for i in idxs]
+
+    # randomize laser #########################################################
+    dur = int(laser_dur/dt)                
+    if rnd_laser:
+        
+        idxs_rnd = []
+        idxe_rnd = []
+        
+        tmp = np.random.randint(dur, idxs[0]-dur)
+        idxs_rnd.append(tmp)
+        idxe_rnd.append(tmp+dur)
+        for (a,b) in zip(idxe[0:-1], idxs[1:]):
+            
+            if a+2*dur < b-dur:
+                
+                tmp = np.random.randint(a+2*dur,b-dur)
+                idxs_rnd.append(tmp)
+                idxe_rnd.append(tmp+dur)
+
+        idxs = idxs_rnd 
+        idxe = idxe_rnd                                       
+    ###########################################################################    
 
     laser_idx = []
     for (si,sj) in zip(idxs, idxe):
         laser_idx += list(range(si,sj+1))
+    laser_idx = np.array(laser_idx)
 
     nlsr = int(np.floor(lsr.shape[0]/nbin))
     laser = np.zeros((nlsr,))
+    laser_idx = laser_idx[laser_idx < nlsr]
+
     laser[laser_idx] = 1
     laser = laser[tidx]
     # get again indices after kcut
@@ -1319,12 +1353,11 @@ def pc_transitions_laser(mouse, PC, M, transitions, pre, post, si_threshold, sj_
     idxs = [s[0]  for s in sleepy.get_sequences(np.where(laser == 1)[0])]
     idxe = [s[-1] for s in sleepy.get_sequences(np.where(laser == 1)[0])]
     #######################################################################
-    
+
     # zscore pcs:
     if pzscore_pc:
         for i in range(PC.shape[0]):
             PC[i,:] = (PC[i,:]- PC[i,:].mean()) / PC[i,:].std()
-    
     
     data = []
     ev = 0
@@ -1379,19 +1412,24 @@ def pc_transitions_laser(mouse, PC, M, transitions, pre, post, si_threshold, sj_
                         # 8,9,10
                         # np.arange(8,12) = 8,9,10,11,12
                         
+                        delay = -1
                         laser_on = 'no'
                         if ti+1 in laser_idx:
                             laser_on = 'yes'
-
-                        
-                        data += zip([s[0]]*m, [label]*m, t, act, [sid]*m, [laser_on]*m)                                               
+                            
+                            a = ti
+                            while laser[a] == 1:
+                                a = a-1
+                            a = a+1
+                            delay = (ti - a + 1) * dt
+                                                    
+                        laser_cut = laser[ti-ipre+1:ti+ipost+1]                        
+                        data += zip([s[0]]*m, [label]*m, t, act, [sid]*m, [laser_on]*m, laser_cut, [delay]*m)                                               
                         ev += 1
 
-    df = pd.DataFrame(data=data, columns=['event', 'pc', 'time', 'fr', 'trans', 'laser_on'])
+    df = pd.DataFrame(data=data, columns=['event', 'pc', 'time', 'fr', 'trans', 'laser_on', 'laser', 'delay'])
 
     return df
-
-
 
 
 
@@ -1563,7 +1601,7 @@ def pr_components(units, ndim=3, nsmooth=0, pzscore=False):
 
 def sleep_components(units, M, wake_dur=600, wake_break=60, ndim=3, nsmooth=0, 
                      pzscore=False, detrend=False, pplot=True, pc_sign=[], 
-                     kcuts=[], mode='w', ppath='', mouse='', collapse=False,
+                     kcuts=[], mode='w', mouse='', collapse=False,
                      ylim=[], config_file='mouse_config.txt'):
     """
     Calculate principal components, excluding long wake periods in the recording.
@@ -1602,7 +1640,10 @@ def sleep_components(units, M, wake_dur=600, wake_break=60, ndim=3, nsmooth=0,
         if empty list, don't fix ylims, otherwise set plt.ylim(ylim) for each PC
     config_file: str
         mouse configuration file as loaded by &load_config()
-        
+    mouse: str
+        To plot laser, set $mouse to mouse name
+            
+    
     Returns
     -------
     PC : np.array
@@ -1869,6 +1910,347 @@ def sleep_components(units, M, wake_dur=600, wake_break=60, ndim=3, nsmooth=0,
         idx_total = np.setdiff1d(idx_total, widx)
 
     return PC, V, Vh, idx
+
+
+
+def sleep_components_laser(units, M, wake_dur=600, wake_break=60, ndim=3, nsmooth=0, 
+                     pzscore=False, detrend=False, pplot=True, pc_sign=[], 
+                     kcuts=[], mode='w', mouse='', collapse=False,
+                     ylim=[], config_file='mouse_config.txt'):
+    """
+    Similar to &sleep_components(), but allows for discarding laser intervals 
+    for PC estimation.
+    Calculate principal components, excluding long wake periods in the recording.
+    Long wake periods are defined by the parameters $wake_dur (duration of wake episodes)
+    and $wake_break (wake episodes separated by less than $wake_break seconds are fused).
+
+    Note: To make sure that the laser is read, set $mouse to the mouse name
+
+    Parameters
+    ----------
+    units : pd.DataFrame
+        each column corresponds to a unit; each row is a time bin
+    M : np.array
+        hypnogram.
+    wake_dur : float, optional
+        Exclude wake periods that are longer than $wake_dur seconds. The default is 600.
+    wake_break : float, optional
+        Two wake periods that are separated by less than $wake_break seconds 
+        are merged to one period. The default is 60.
+    ndim : int, optional
+        reduce data (matrix of firing rate vector) to $ndim dimensions using PCA. The default is 3.
+    nsmooth : float, optional
+        Smooth firing rate vector. The default is 0.
+    pzscore : boolean, optional
+        If True, zscore firing rates. The default is False.
+    detrend : boolean, optional
+        If True, detrend each firing rate vector.
+    pc_sign : list with $ndim elements, either 1 or -1.
+        The sign of PCs is ambiguous, so if preferred multiply, PC i with pc_sign[i]
+    kcuts : list of tuples or lists with two elements.
+        Discard the time interval ranging from kcuts[i][0] to kcuts[i][1] seconds
+    mode : string with characters 'r' and/or 'w'
+        if 'r' in mode, remove all REM indices for PC computation
+        if 'w' in mode, remove all Wake indices for PC computation
+    collapse: boolean
+        if True, plot each PC in its own axis
+    ylim: empty list, or tuple
+        if empty list, don't fix ylims, otherwise set plt.ylim(ylim) for each PC
+    config_file: str
+        mouse configuration file as loaded by &load_config()
+        
+    Returns
+    -------
+    PC : np.array
+        The $ndim principal components. Note although the PCs have been calculated
+        without long wake periods, the returned PCs do include all wake periods.
+
+    V : np.array
+        Eigenvalues of the covariance matrix = Variance associated with each PC
+    
+    Vh : np.array
+        each row in Vh is an eigenvector of the covariance matrix
+            
+    idx : np.array 
+        Indices of time bins used for PC calculation. 
+        NOTE that @idx are the indices obtained
+        AFTER cutting out the KCUT intervals! 
+
+    """
+    dt = 2.5  
+    
+    nhypno = np.min((len(M), units.shape[0]))
+    Morig = M.copy()
+    M = M[0:nhypno]
+    tidx = np.arange(0, nhypno)
+    
+    # KCUT ####################################################################
+    # get the indices (in brainstate time) that we're going to completely discard:
+    if len(kcuts) > 0:
+        kidx = []
+        for kcut in kcuts:
+            a = int(kcut[0]/dt)
+            b = int(kcut[-1]/dt)
+            if b > len(M):
+                b = len(M)
+            kidx += list(np.arange(a, b))
+        
+        tidx = np.setdiff1d(tidx, kidx)
+        M = M[tidx]
+        nhypno = len(tidx)
+        
+        print(len(tidx))
+    ###########################################################################    
+    
+    unitIDs = [unit for unit in units.columns if '_' in unit]
+    unitIDs = [unit for unit in unitIDs if re.split('_', unit)[1] == 'good']
+    nsample = nhypno           # number of time points
+    nvar    = len(unitIDs)     # number of units
+    # Note the number of samples stays the same; while the number is variables
+    # (or dimensions) is reduced! We want to keep the same number of time points,
+    # but have only a few 'modes'.    
+    R = np.zeros((nvar, nsample))
+    #@tidx are the indices we're further considering.
+    
+    for i,unit in enumerate(unitIDs):
+        tmp = sleepy.smooth_data(np.array(units[unit]),nsmooth)
+        tmp = tmp[tidx]
+        if detrend:
+            tmp = scipy.signal.detrend(tmp)
+
+        if pzscore:
+            R[i,:] = (tmp - tmp.mean()) / tmp.std()
+        else:
+            R[i,:] = tmp
+        
+
+    # find long wake blocks:
+    widx = sleepy.get_sequences(np.where(M==2)[0], ibreak=int(wake_break/dt))
+    # all REM sequences
+    ridx = sleepy.get_sequences(np.where(M==1)[0])
+
+    nidx = sleepy.get_sequences(np.where(M==3)[0])
+
+    tmp = []
+    for w in widx:
+        if len(w) * dt > wake_dur:
+            tmp += list(w)            
+    widx = tmp
+
+    tmp = []
+    for r in ridx:
+        tmp += list(r)            
+    ridx = tmp
+
+    tmp = []
+    for r in nidx:
+        tmp += list(r)            
+    nidx = tmp
+
+    nhypno = np.min((len(M), units.shape[0]))
+    idx = np.arange(0, np.min((len(M), units.shape[0])))
+    if 'w' in mode:
+        idx = np.setdiff1d(idx, widx)
+    else:
+        widx = []
+    if 'r' in mode:
+        idx = np.setdiff1d(idx, ridx)
+    if 'n' in mode:
+        idx = np.setdiff1d(idx, nidx)
+    else:
+        ridx = []
+
+    # collect laser information ###############################################
+    if mouse:
+        ddir = load_config(config_file)[mouse]['SL_PATH']
+        ppath, name = os.path.split(ddir)
+
+        if os.path.isfile(os.path.join(ddir, 'laser_%s.mat' % name)):
+            lsr = so.loadmat(os.path.join(ddir, 'laser_%s.mat' % name), squeeze_me=True)['laser']
+
+            sr = sleepy.get_snr(ppath, name)
+            nbin = int(np.round(sr)*2.5)
+        
+            idxs, idxe = sleepy.laser_start_end(lsr)
+            idxs = [int(i/nbin) for i in idxs]
+            idxe = [int(i/nbin) for i in idxe]
+            laser_idx = []
+            for (si,sj) in zip(idxs, idxe):
+                laser_idx += list(range(si,sj+1))
+
+            nlsr = int(np.floor(lsr.shape[0]/nbin))
+            laser = np.zeros((nlsr,))
+            laser[laser_idx] = 1
+            laser = laser[tidx]
+            laser_idx = np.where(laser == 1)[0]
+            
+        print('Removing laser indices from mouse %s' % mouse)
+        idx = np.setdiff1d(idx, laser_idx)
+    ###########################################################################
+                    
+    # divide by sqrt(nsample - 1) to make SVD equivalent to PCA
+    Y = R[:,idx].T / np.sqrt(nsample-1)
+    # make sure the the columns of Y are mean-zero
+    for i in range(nvar):
+        Y[:,i] = Y[:,i] - Y[:,i].mean()
+        R[i,:] = R[i,:] - R[i,idx].mean()
+    
+    # SVD
+    # Note that each column is a neuron, 
+    # and each row is a time point
+    U,S,Vh = scipy.linalg.svd(Y)
+    
+    # each row in Vh is an eigenvector of the COV matrix;
+    # to get the PCs, we project R onto the eigenvectors:
+    PC = np.dot(Vh, R)[0:ndim,:]
+    V = S**2
+    
+    if len(pc_sign) > 0:
+        i = 0
+        for s in pc_sign:
+            PC[i,:] = PC[i,:] * s
+            i += 1
+        
+    if pplot:
+        add_laser = False
+        t = np.arange(0, nhypno) * dt
+        plt.figure()
+        tmp = widx+ridx
+        tmp.sort()
+        widx = sleepy.get_sequences(np.array(tmp))
+        axes_exc = plt.axes([0.2, 0.9, 0.7, 0.05])
+        for w in widx:
+            if len(w) > 1:
+                if w[-1] < len(M):
+                    plt.plot([t[w[0]], t[w[-1]]], [1, 1], 'k', lw=2)
+        plt.ylim([0, 2])
+        plt.xlim((t[0], t[-1]))
+                
+        # if laser exists also add laser here --
+        if mouse:
+            ddir = load_config(config_file)[mouse]['SL_PATH']
+            ppath, name = os.path.split(ddir)
+
+            if os.path.isfile(os.path.join(ddir, 'laser_%s.mat' % name)):
+                lsr = so.loadmat(os.path.join(ddir, 'laser_%s.mat' % name), squeeze_me=True)['laser']
+    
+                sr = sleepy.get_snr(ppath, name)
+                nbin = int(np.round(sr)*2.5)
+            
+                idxs, idxe = sleepy.laser_start_end(lsr)
+                idxs = [int(i/nbin) for i in idxs]
+                idxe = [int(i/nbin) for i in idxe]
+                laser_idx = []
+                for (si,sj) in zip(idxs, idxe):
+                    laser_idx += list(range(si,sj+1))
+    
+                nlsr = int(np.floor(lsr.shape[0]/nbin))
+                laser = np.zeros((nlsr,))
+                laser[laser_idx] = 1
+                laser = laser[tidx]
+    
+                lsr_seq = sleepy.get_sequences(np.where(laser==1)[0])
+                
+                for w in lsr_seq:
+                    if w[-1] < len(M):
+                        plt.plot([t[w[0]], t[w[-1]]], [1.5, 1.5], 'b', lw=2)
+                plt.xlim((t[0], t[-1]))
+                
+                add_laser = True
+                        
+        sleepy._despine_axes(axes_exc)                
+        axes_brs = plt.axes([0.2, 0.85, 0.7, 0.05], sharex=axes_exc)        
+        cmap = plt.cm.jet
+        my_map = cmap.from_list('brs', [[0, 0, 0], [0, 1, 1], [0.6, 0, 1], [0.8, 0.8, 0.8]], 4)
+        tmp = axes_brs.pcolorfast(t, [0, 1], np.array([M]), vmin=0, vmax=3)
+        tmp.set_cmap(my_map)
+        axes_brs.axis('tight')
+        sleepy._despine_axes(axes_brs)
+
+        if collapse:    
+            plt.axes([0.2, 0.2, 0.7, 0.6], sharex=axes_brs)
+            plt.plot(t, PC[:,:].T)
+            plt.xlim((t[0], t[-1]))
+            sns.despine()
+            plt.xlabel('Time (s)')
+            plt.ylabel('PC')
+        
+        else:
+            clrs = sns.color_palette("husl", ndim)
+            
+            d = (0.6 / ndim) * 0.3
+            ny = (0.6 / ndim)-d
+            for i in range(ndim):
+                ax = plt.axes([0.2, 0.2+i*(ny+d), 0.7, ny], sharex=axes_exc)
+                ax.plot(t, PC[ndim-1-i,:], color=clrs[i])    
+                plt.xlim([t[0], t[-1]])
+                sleepy.box_off(ax)
+                plt.ylabel('PC%d' % (ndim-i))
+    
+                if add_laser:
+                    ylims = ax.get_ylim()
+
+                    for w in lsr_seq:
+                        if w[-1] < len(M):
+                            if 1 in M[w]:
+                                color = 'b'
+                            else:
+                                color = 'r'
+                            #if M[w[0]] == 3:
+                            #plt.plot(t[w[0]], PC[ndim-1-i,w[0]-1:w[0]+1].mean(), '.', color=color, lw=2)
+                            plt.plot(t[w[0]], PC[ndim-1-i,w[0]], '.', color=color, lw=2)
+                            
+                            laser_tend = (w[-1] - w[0]) * dt
+                            dy = ylims[1] - ylims[0]
+                            ax.add_patch(patches.Rectangle(
+                                (t[w[0]], ylims[0]), laser_tend, dy, 
+                                facecolor=[0.6, 0.6, 1], edgecolor=[0.6, 0.6, 1]))
+
+                if i > 0:
+                    ax.spines["bottom"].set_visible(False)
+                    ax.axes.get_xaxis().set_visible(False)
+                else:
+                    plt.xlabel('Time (s)')
+                
+                if len(ylim) > 0:
+                    plt.ylim(ylim)
+    
+        var = S**2
+        var_total = np.sum(S**2)
+        
+        # Calculate the cumulative variance explained, i.e. how much
+        # of the variance is captured by the first i principal components. 
+        p = []
+        for i in range(1,len(var)+1):
+            s = np.sum(var[0:i])
+            p.append(s/var_total)
+                
+        plt.figure(figsize=(4,4))
+        plt.plot(p, '.', color='gray')
+        plt.xlabel(r'$\mathrm{PC_i}$')
+        plt.ylabel('Cum. variance')    
+        plt.subplots_adjust(bottom=0.2, left=0.2)
+        plt.ylim([0, 1.1])
+        sns.despine()
+        
+    if len(kcuts) > 0:
+        # find long wake blocks:
+        widx = sleepy.get_sequences(np.where(Morig==2)[0], ibreak=int(wake_break/dt))
+        tmp = []
+        for w in widx:
+            if len(w) * dt > wake_dur:
+                tmp += list(w)
+        widx = tmp
+        
+        nhypno = np.min((len(Morig), units.shape[0]))
+        idx_total = np.arange(0, nhypno)
+        
+        idx_total = np.setdiff1d(idx_total, kidx)
+        idx_total = np.setdiff1d(idx_total, widx)
+
+    return PC, V, Vh, idx
+
+
 
 
 
@@ -3607,7 +3989,7 @@ def optimal_direction(dfc, pref_direction, thr=0, pplot=True, ax='', brain_regio
 
 def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], min_laser=20, pzscore_pc=False, local_pzscore=True,
                         pplot=True, ci=None, refractory_rule=False, ma_thr=10, ma_rem_exception=False, rnd_laser=False, seed=1,
-                        config_file='mouse_config.txt'):
+                        config_file='mouse_config.txt', laser_dur=-1):
     """
     Calculated the time course of the provided PCs relative to the laser onset.
 
@@ -3640,6 +4022,8 @@ def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], min_laser=20, pzscore
         DESCRIPTION. The default is False.
     config_file : str, optional
         Mouse recordings configuration file.
+    laser_dur : float
+        Duration of laser; if -1, calculate laser duration using laser_*.mat file
 
     Returns
     -------
@@ -3712,9 +4096,20 @@ def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], min_laser=20, pzscore
 
         idxs, idxe = sleepy.laser_start_end(lsr)
         idxs = [int(i/nbin) for i in idxs]
-        idxe = [int(i/nbin) for i in idxe]
+        if laser_dur == -1:
+            idxe = [int(i/nbin) for i in idxe]            
+            b = [i for i in idxe if i in tidx]
+            a = [i for i in idxs if i in tidx]
+            b = np.array(b)
+            a = np.array(a)            
+            laser_dur = (np.mean(b-a) + 1) * dt
+            
+            print('Laser duration: %f' % laser_dur)
+        else:
+            idxe = [(int(i + int(laser_dur/dt))) for i in idxs]
 
-        dur = int(60/2.5)                
+        # randomize laser #####################################################
+        dur = int(laser_dur/dt)                
         if rnd_laser:
             
             idxs_rnd = []
@@ -3733,13 +4128,18 @@ def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], min_laser=20, pzscore
 
             idxs = idxs_rnd 
             idxe = idxe_rnd                                       
+        #######################################################################
+
                     
         laser_idx = []
         for (si,sj) in zip(idxs, idxe):
             laser_idx += list(range(si,sj+1))
+        laser_idx = np.array(laser_idx)
 
         nlsr = int(np.floor(lsr.shape[0]/nbin))
-        laser = np.zeros((nlsr,))
+        laser = np.zeros((nlsr,))        
+        laser_idx = laser_idx[laser_idx < nlsr]
+
         laser[laser_idx] = 1
         laser = laser[tidx]
 
@@ -3812,8 +4212,7 @@ def laser_triggered_pcs(PC, pre, post, M, mouse, kcuts=[], min_laser=20, pzscore
                     v = v+1
                     dur_rem_pre = (l-v+1)*dt
                     inrem = len(np.where(M[l+1:i] == 3)[0]) * dt
-                
-                
+                                
                     if inrem <= dur_rem_pre * 2:
                         refr = 'yes'
                                
@@ -9375,11 +9774,11 @@ def bandpass_corr_state(mouse, band, ids=[], mouse_config='mouse_config.txt',
 
 
 
-def is_cycle(mouse, units, band, ids=[], mouse_config='mouse_config.txt', 
+def is_cycle(mouse, units, band, ids=[], mouse_config='mouse_config.txt', ref_signal='eeg',
              ma_thr=10, dt=2.5, nstates=21, nsections=5,
-             filt_speeg = True, box_filt=[1,4], pnorm_spec=True, wfreq=[0.01, 0.03], nrem_thr=120,
-             nsmooth=0, kcuts=[], pzscore=True, 
-             min_irem_dur=0, wake_perc=1):
+             filt_speeg = True, box_filt=[1,4], pnorm_spec=True, wfreq=[0.01, 0.03], 
+             nrem_thr=120, nsmooth=0, kcuts=[], pzscore=True, 
+             min_irem_dur=0, wake_perc=1, perc_type='abs'):
     """
     For each consolidated NREM episode determine the infraslow oscillation using Hilbert transform
     and then plot the average firing rate throughout one infraslow cycle.
@@ -9397,6 +9796,9 @@ def is_cycle(mouse, units, band, ids=[], mouse_config='mouse_config.txt',
         DESCRIPTION. The default is [].
     mouse_config : TYPE, optional
         DESCRIPTION. The default is 'mouse_config.txt'.
+    ref_signal: str or np.array
+        if 'eeg' load EEG and compute sigma power; if type is np.array, use
+        this vector as reference signal to compute single infraslow cycles
     ma_thr : TYPE, optional
         DESCRIPTION. The default is 10.
     dt : TYPE, optional
@@ -9409,8 +9811,8 @@ def is_cycle(mouse, units, band, ids=[], mouse_config='mouse_config.txt',
         DESCRIPTION. The default is [1,4].
     pnorm_spec : TYPE, optional
         DESCRIPTION. The default is True.
-    wfreq : TYPE, optional
-        DESCRIPTION. The default is [0.01, 0.03].
+    wfreq : tuple or list
+        Corner frequencies for band-pass filtering of sigma power. The default is [0.01, 0.03].
     nrem_thr : TYPE, optional
         DESCRIPTION. The default is 120.
     nsmooth : TYPE, optional
@@ -9419,6 +9821,9 @@ def is_cycle(mouse, units, band, ids=[], mouse_config='mouse_config.txt',
         DESCRIPTION. The default is [].
     pzscore : TYPE, optional
         DESCRIPTION. The default is True.
+    perc_type : str
+        options: 'abs' or 'nrem', If 'nrem' use time in NREM since last REM episode
+        to define each section; otherwise use absolute time sinace laser REM episode
 
     Returns
     -------
@@ -9459,34 +9864,49 @@ def is_cycle(mouse, units, band, ids=[], mouse_config='mouse_config.txt',
         nhypno = len(tidx)        
     ###########################################################################    
 
+    # seq = sleepy.get_sequences(np.where(M==2)[0])
+    # for s in seq:
+    #     if np.round(len(s)*dt) <= ma_thr:
+    #         M[s] = 3
+    # seq = sleepy.get_sequences(np.where(M>=3)[0])
+
+    if ref_signal == 'eeg':
+        P = so.loadmat(os.path.join(ppath, name, 'sp_' + name + '.mat'), squeeze_me=True)
+        SPEEG = P['SP']
+        freq = P['freq']
+        dfreq = freq[1]-freq[0]
+        isigma = np.where((freq>=band[0])&(freq<=band[1]))[0]
+        SPEEG = SPEEG[:,0:nhypno]    
+        SPEEG_orig = SPEEG.copy()
+    
+        if filt_speeg:
+            filt = np.ones(box_filt)
+            filt = np.divide(filt, filt.sum())
+            SPEEG = scipy.signal.convolve2d(SPEEG, filt, boundary='symm', mode='same')
+    
+        if pnorm_spec:
+            sp_mean = SPEEG.mean(axis=1)
+            SPEEG = np.divide(SPEEG, np.tile(sp_mean, (SPEEG.shape[1], 1)).T)
+            sigma_pow = SPEEG[isigma,:].mean(axis=0)
+            
+            SPEEG_orig = np.divide(SPEEG_orig, np.tile(sp_mean, (SPEEG.shape[1], 1)).T)
+            sigma_pow_orig = SPEEG_orig[isigma,:].mean(axis=0)        
+        else:
+            sigma_pow = SPEEG[isigma, :].sum(axis=0)*dfreq
+    else:
+        if len(M) != len(ref_signal):
+            mmin = np.min((len(M), len(ref_signal)))
+            M = M[0:mmin]
+            ref_signal = ref_signal[0:mmin]
+        sigma_pow_orig = ref_signal.copy()
+        sigma_pow = ref_signal
+
+
     seq = sleepy.get_sequences(np.where(M==2)[0])
     for s in seq:
         if np.round(len(s)*dt) <= ma_thr:
             M[s] = 3
     seq = sleepy.get_sequences(np.where(M>=3)[0])
-
-    P = so.loadmat(os.path.join(ppath, name, 'sp_' + name + '.mat'), squeeze_me=True)
-    SPEEG = P['SP']
-    freq = P['freq']
-    dfreq = freq[1]-freq[0]
-    isigma = np.where((freq>=band[0])&(freq<=band[1]))[0]
-    SPEEG = SPEEG[:,0:nhypno]    
-    SPEEG_orig = SPEEG.copy()
-
-    if filt_speeg:
-        filt = np.ones(box_filt)
-        filt = np.divide(filt, filt.sum())
-        SPEEG = scipy.signal.convolve2d(SPEEG, filt, boundary='symm', mode='same')
-
-    if pnorm_spec:
-        sp_mean = SPEEG.mean(axis=1)
-        SPEEG = np.divide(SPEEG, np.tile(sp_mean, (SPEEG.shape[1], 1)).T)
-        sigma_pow = SPEEG[isigma,:].mean(axis=0)
-        
-        SPEEG_orig = np.divide(SPEEG_orig, np.tile(sp_mean, (SPEEG.shape[1], 1)).T)
-        sigma_pow_orig = SPEEG_orig[isigma,:].mean(axis=0)        
-    else:
-        sigma_pow = SPEEG[isigma, :].sum(axis=0)*dfreq
 
     # load unit data: #########################################################
     unitIDs = [unit for unit in list(units.columns) if '_' in unit]
@@ -9540,7 +9960,7 @@ def is_cycle(mouse, units, band, ids=[], mouse_config='mouse_config.txt',
             if len(sidx) >= 2:
 
                 for (p,q) in zip(sidx[0:-1], sidx[1:]):
-                    perc, isection = get_cycle_perc(M, p, nsections, min_irem_dur=min_irem_dur, wake_perc=wake_perc)
+                    perc, isection = get_cycle_perc(M, p, nsections, min_irem_dur=min_irem_dur, wake_perc=wake_perc, perc_type=perc_type)
                     if np.isnan(perc):
                         continue
                     
@@ -9556,16 +9976,135 @@ def is_cycle(mouse, units, band, ids=[], mouse_config='mouse_config.txt',
                         data += zip([unit]*nstates, range(nstates), fr_morph, phase_bins, sigma_morph, [isection]*nstates)
     
     df = pd.DataFrame(data=data, columns=['ID', 'section', 'fr', 'phase', 'sigma', 'irem'])
-    
-    dfm = df.groupby(['ID', 'section']).mean().reset_index()
-    
+    dfm = df.groupby(['ID', 'section']).mean().reset_index()    
     df_section = df[~df.irem.isna()].groupby(['ID', 'section', 'phase', 'irem']).mean().reset_index()
     
     return dfm, df_section, df
 
 
+
+def ma_sections(mouse, units, ids=[], mouse_config='', kcuts=[], pre=10, post=20, nsections=3,
+                ma_thr=10, ma_rem_exception=True, dt=2.5, nsmooth=0, pzscore=True):
     
-def get_cycle_perc(M, si, nsections, min_irem_dur=0, wake_perc=1, dt=2.5):
+    if mouse_config == '':
+        mouse_config = 'mouse_config.txt'
+    
+    path = load_config(mouse_config)[mouse]['SL_PATH']
+    ppath, name = os.path.split(path)
+    M = sleepy.load_stateidx(ppath, name)[0]
+        
+    nhypno = np.min((units.shape[0], M.shape[0]))
+    tidx = np.arange(0, nhypno)    
+    M = M[0:nhypno]
+    
+    # NEW 07/01/22:
+    # get the indices (in brainstate time) that we're going to completely discard:
+    if len(kcuts) > 0:
+        kidx = []
+        for kcut in kcuts:
+            a = int(kcut[0]/dt)
+            b = int(kcut[-1]/dt)
+            if b > len(M):
+                b = len(M)
+            kidx += list(np.arange(a, b))
+        
+        tidx = np.setdiff1d(tidx, kidx)
+        M = M[tidx]
+        nhypno = len(tidx)        
+    ###########################################################################    
+
+    # flatten out MAs #########################################################
+    if ma_thr>0:
+        seq = sleepy.get_sequences(np.where(M==2)[0])
+        for s in seq:
+            if np.round(len(s)*dt) <= ma_thr:
+                if ma_rem_exception:
+                    if (s[0]>1) and (M[s[0] - 1] != 1):
+                        M[s] = 5
+                else:
+                    M[s] = 3
+    ###########################################################################
+
+
+    ipre  = int(np.round(pre/dt))
+    ipost = int(np.round(post/dt))
+    t = np.arange(-ipre, ipost) * dt
+    
+
+    # load unit data: #########################################################
+    unitIDs = [unit for unit in list(units.columns) if '_' in unit]
+    unitIDs = [unit for unit in units.columns if re.split('_', unit)[1] == 'good']
+    if ids == []:
+        ids = unitIDs
+    R = np.zeros((len(ids), len(tidx)))    
+        
+    for i,unit in enumerate(ids):        
+        tmp = sleepy.smooth_data(np.array(units[unit]), nsmooth)
+        if pzscore:
+            R[i,:] = (tmp[tidx] - tmp[tidx].mean()) / tmp[tidx].std()
+        else:
+            R[i,:] = tmp[tidx]
+
+    rem_seq = sleepy.get_sequences(np.where(M==1)[0])
+    first_rem = rem_seq[0][-1]
+    last_rem = rem_seq[-1][0]
+    seq = sleepy.get_sequences(np.where(M==5)[0])
+    
+    seq = [s for s in seq if s[0] > first_rem]
+    seq = [s for s in seq if s[0] < last_rem]
+    
+    data = []
+    for s in seq:
+        si = s[0]
+
+        perc, isection = get_cycle_perc(M, si, nsections, perc_type='abs')
+
+
+        for i,unit in enumerate(ids):
+
+            ii = np.arange(si-ipre, si+ipost)
+            fr = R[i,:]                
+            fr_cut = fr[ii]
+
+            data += zip([unit]*len(t), t, fr_cut, [isection]*len(t))
+
+    df = pd.DataFrame(data=data, columns=['ID', 'time', 'fr', 'section'])
+    dfm = df.groupby(['ID', 'section', 'time']).mean().reset_index()    
+
+    return df, dfm    
+
+
+
+def get_cycle_perc(M, si, nsections, min_irem_dur=0, wake_perc=1, perc_type='nrem', dt=2.5):
+    """
+    
+
+    Parameters
+    ----------
+    M : TYPE
+        DESCRIPTION.
+    si : TYPE
+        DESCRIPTION.
+    nsections : TYPE
+        DESCRIPTION.
+    min_irem_dur : TYPE, optional
+        DESCRIPTION. The default is 0.
+    wake_perc : TYPE, optional
+        DESCRIPTION. The default is 1.
+    perc_type : str, optional
+        'abs' or 'nrem'. If 'nrem', determine percentiles within inter-NREM based 
+        on the time within NREM sleep.
+    dt : TYPE, optional
+        DESCRIPTION. The default is 2.5.
+
+    Returns
+    -------
+    TYPE
+        DESCRIPTION.
+    TYPE
+        DESCRIPTION.
+
+    """
     
     seq = sleepy.get_sequences(np.where(M==1)[0])
 
@@ -9596,12 +10135,13 @@ def get_cycle_perc(M, si, nsections, min_irem_dur=0, wake_perc=1, dt=2.5):
         #print('not found - cond 3')
         return np.nan, np.nan
     
-    x = si - pp[-1]
-    
-    perc = len(np.where(nrem_idx <= x)[0]) / len(nrem_idx)
-    idur = len(idx)
-    
-    perc = x/idur
+    # distance of current point from last REM offset
+    x = si - pp[-1]    
+    if perc_type == 'nrem':
+        perc = len(np.where(nrem_idx <= x)[0]) / len(nrem_idx)
+    else:
+        idur = len(idx)    
+        perc = x/idur
     
     quantiles = np.arange(0, 101, 100/nsections) / 100
     
@@ -9964,30 +10504,45 @@ def cc_jitter(unit1, unit2, window, sr, plot=True, plt_win=0.5, version=1):
     
     if version == 1:
         n = 1
-         
-        norm = n * np.sqrt(fin1.mean() * fin2.mean()) * sr
-        CC = scipy.signal.correlate(fin1, fin2) / norm
-        
-        norm = n * np.sqrt(unit1.mean() * unit2.mean()) * sr
-        CCorig = scipy.signal.correlate(unit1, unit2) / norm
-    
-        corrCC = CCorig-CC
     else:
         n = len(unit1)
+
+    norm = n * np.sqrt(fin1.mean() * fin2.mean()) * sr
+    CC = scipy.signal.correlate(fin1, fin2) / norm
+    
+    norm_orig = n * np.sqrt(unit1.mean() * unit2.mean()) * sr
+    CCorig = scipy.signal.correlate(unit1, unit2) / norm_orig
+    
+    corrCC = CCorig - CC
+    
+    # Normalize explicitly by spike train duration:
+    duration_sec = len(unit1) / sr
+    corrCC = corrCC / duration_sec
+        
          
-        norm = n * np.sqrt(fin1.mean() * fin2.mean()) * sr
-        CC = scipy.signal.correlate(fin1, fin2) / norm
+    #     norm = n * np.sqrt(fin1.mean() * fin2.mean()) * sr
+    #     CC = scipy.signal.correlate(fin1, fin2) / norm
         
-        norm = n * np.sqrt(unit1.mean() * unit2.mean()) * sr
-        CCorig = scipy.signal.correlate(unit1, unit2) / norm
+    #     norm = n * np.sqrt(unit1.mean() * unit2.mean()) * sr
+    #     CCorig = scipy.signal.correlate(unit1, unit2) / norm
     
-        corrCC = CCorig-CC
+    #     corrCC = CCorig-CC
+    # else:
+    #     n = len(unit1)
+         
+    #     norm = n * np.sqrt(fin1.mean() * fin2.mean()) * sr
+    #     CC = scipy.signal.correlate(fin1, fin2) / norm
+        
+    #     norm = n * np.sqrt(unit1.mean() * unit2.mean()) * sr
+    #     CCorig = scipy.signal.correlate(unit1, unit2) / norm
+    
+    #     corrCC = CCorig-CC
         
     
-    # not if unit1 has len n, then the correlation output has len 2*n-1
+    # if unit1 has len n, then the correlation output has len 2*n-1
     n = len(unit1)
     # the center point (= 0 s) is element (n-1)
-    t = np.arange(-n+1, n) * (1/sr)
+    t = np.arange(-n+1, n) * (1/sr) * 1000
         
     idx = np.where((t>=-plt_win) & (t<=plt_win))[0]
     
@@ -9997,7 +10552,7 @@ def cc_jitter(unit1, unit2, window, sr, plot=True, plt_win=0.5, version=1):
 
         plt.plot(t[idx], corrCC[idx], 'k')
         plt.xlabel('Lag (ms)')
-        
+        plt.ylabel('Normalized Cross-correlation (Hz)')
         ylim = ax.get_ylim()
         plt.plot([0,0], ylim, 'k--')
 
@@ -10429,6 +10984,22 @@ def calculate_lfp_spectrum(ppath, name, LFP, fres=0.5):
     print(r'Saved LFP Spectrum to file %s.' % spfile)
     
     return Pxx, f, t
+
+
+
+def flatten_mas(M, ma_thr, ma_rem_exception=True, dt=2.5):
+    # flatten out MAs
+    if ma_thr>0:
+        seq = sleepy.get_sequences(np.where(M==2)[0])
+        for s in seq:
+            if np.round(len(s)*dt) <= ma_thr:
+                if ma_rem_exception:
+                    if (s[0]>1) and (M[s[0] - 1] != 1):
+                        M[s] = 3
+                else:
+                    M[s] = 3
+
+    return M
 
 
 
