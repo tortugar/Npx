@@ -10438,7 +10438,7 @@ def xcorr_frs(unit1, unit2, window, ndown, sr=1000, pplot=False):
 
 
 
-def cc_jitter(unit1, unit2, window, sr, plot=True, plt_win=0.5, version=1):
+def cc_jitter_old(unit1, unit2, window, sr, plot=True, plt_win=0.5, version=1):
     """
     Interpretation
 
@@ -10542,7 +10542,7 @@ def cc_jitter(unit1, unit2, window, sr, plot=True, plt_win=0.5, version=1):
     # if unit1 has len n, then the correlation output has len 2*n-1
     n = len(unit1)
     # the center point (= 0 s) is element (n-1)
-    t = np.arange(-n+1, n) * (1/sr) * 1000
+    t = np.arange(-n+1, n) * (1/sr) #* 1000
         
     idx = np.where((t>=-plt_win) & (t<=plt_win))[0]
     
@@ -10560,129 +10560,106 @@ def cc_jitter(unit1, unit2, window, sr, plot=True, plt_win=0.5, version=1):
             
     return corrCC[idx], t[idx]
    
-            
-           
-def cc_jitter2(unit1, unit2, window, sr, plot=True, plt_win=0.5):
+                     
+
+def cc_jitter(
+    unit1,
+    unit2,
+    window,
+    sr,
+    plot=True,
+    plt_win=0.5,
+    subtract_baseline=True,
+    to_hz=False,          # <‑‑ NEW FLAG
+):
     """
-    Interpretation
-
-    Say b follows a, e.g.,
-    a = [1,0,1,0]
-    b = [0,1,0,1]
-    
-    
-    cross-correlation:
-    [1, 0, 2, 0, 1, 0, 0]
-              |
-             t=0
-
-    then there's a positive peak at a negative time point.
-    In other words, negative time points mean
-    a precedes b
+    Length‑independent, jitter‑corrected cross‑correlogram.
 
     Parameters
     ----------
-    unit1 : TYPE
-        DESCRIPTION.
-    unit2 : TYPE
-        DESCRIPTION.
-    window : TYPE
-        DESCRIPTION.
-    sr : TYPE
-        DESCRIPTION.
-    plot : TYPE, optional
-        DESCRIPTION. The default is True.
-    plt_win : TYPE, optional
-        DESCRIPTION. The default is 0.5.
+    unit1, unit2 : 1‑D np.ndarray (same length)
+        Spike indicator vectors (0 / 1 or low counts).
+    window       : float
+        Jitter window in seconds.
+    sr           : float
+        Sampling rate (Hz).
+    plot         : bool, optional
+        Draw figure if True.
+    plt_win      : float, optional
+        Half‑width of lag axis shown and returned (seconds).
+    subtract_baseline : bool, optional
+        If True, return (raw − shuffled); else raw only.
+    to_hz        : bool, optional
+        If True, convert the ordinate from dimensionless units
+        to coincidences per second (Hz) by multiplying with `sr`.
+        Default = False.
 
     Returns
     -------
-    TYPE
-        DESCRIPTION.
-    TYPE
-        DESCRIPTION.
-
+    cc   : np.ndarray
+        Cross‑correlogram, already clipped to ± plt_win.  
+        Units = Hz if `to_hz` is True, otherwise dimensionless.
+    lags : np.ndarray
+        Lag axis (seconds), matching `cc`.
     """
-    calc_win = int(2*sr)
-    ncalc_win = int(np.floor(len(unit1)/calc_win))
-    
-    # number of data points per window:
-    iwin = window * sr
-    nsplit = int(np.floor(len(unit1) / iwin))
-    
-    un1=np.array_split(unit1,nsplit)
-    new_un1=[]
-    un2=np.array_split(unit2,nsplit)
-    new_un2=[]
-    
-    for count,value in enumerate(un1):
-        new_un1.append(np.random.permutation(value))
-        new_un2.append(np.random.permutation(un2[count]))
-    fin1=np.concatenate(new_un1)
-    #fin2=np.concatenate(new_un2)
-    fin2 = unit2.copy()
 
-    #jnorm = np.sqrt(fin1.mean() * fin2.mean()) * 1000
-    #norm = np.sqrt(unit1.mean() * unit2.mean()) * 1000
-    
-    corrCC = []     
-    for i in range(ncalc_win-1):
-        a = i*calc_win
-        b = (i+1)*calc_win
-        u1 = unit1[a:b]
-        u2 = unit2[a:b]
+    # -------- basic checks --------
+    if unit1.shape != unit2.shape:
+        raise ValueError("unit1 and unit2 must have identical shape")
+    N = unit1.size
+    if N == 0:
+        raise ValueError("Empty spike trains")
 
-        ju1 = fin1[a:b]
-        ju2 = fin2[a:b]
+    win_pts = int(round(window * sr))
+    if win_pts == 0:
+        raise ValueError("`window` shorter than one sample")
 
-        norm = np.sqrt(u1.mean() * u2.mean()) * 1000
-        CC = scipy.signal.correlate(u1, u2)/norm
+    # -------- build shuffled copy of unit1 --------
+    nsplit = max(N // win_pts, 1)
+    shuffled1 = np.concatenate(
+        [np.random.permutation(chunk)
+         for chunk in np.array_split(unit1, nsplit)]
+    )
 
-        
-        jnorm = np.sqrt(ju1.mean() * ju2.mean()) * 1000
-        jCC = scipy.signal.correlate(ju1, ju2)/jnorm
-        
-        aa = CC - jCC
+    # -------- raw and shuffled cross‑correlations (counts) --------
+    raw_counts  = scipy.signal.correlate(unit1,    unit2, mode="full")
+    shuf_counts = scipy.signal.correlate(shuffled1, unit2, mode="full")
 
-        corrCC.append(aa)    
+    # -------- length‑independent normalisation --------
+    Na, Nb = unit1.sum(), unit2.sum()
+    denom  = np.sqrt(Na * Nb)                 # cancels recording length
+    raw_cc  = raw_counts  / denom
+    shuf_cc = shuf_counts / denom
+    cc_full = raw_cc - shuf_cc if subtract_baseline else raw_cc
 
-    corrCC = np.nanmean(np.array(corrCC), axis=0)
+    # -------- optional conversion to Hz --------
+    if to_hz:
+        cc_full *= sr
 
-    # not if unit1 has len n, then the correlation output has len 2*n-1
-    n = len(u1)
-    # the center point (= 0 s) is element (n-1)
-    t = np.arange(-n+1, n) * (1/sr)
+    # -------- lag axis --------
+    lags_full = np.arange(-N + 1, N) / sr
 
-    #pdb.set_trace()
+    # -------- clip to ± plt_win --------
+    keep = np.abs(lags_full) <= plt_win
+    cc   = cc_full[keep]
+    lags = lags_full[keep]
 
-        
-    idx = np.where((t>=-plt_win) & (t<=plt_win))[0]
-    
+    # -------- optional plot --------
     if plot:
-        plt.figure()
-        
-        
-        #plt.plot(t[idx], CC[idx])
-        #plt.plot(t[idx], CC1[idx])
-        plt.plot(t[idx], corrCC[idx])
-        
-        #plt.plot(corrCC)
-        
-        
-    
-    # if plot==True:
-    #     n = len(unit1)
-    #     delay_arr = np.linspace(-0.5*n/sr, 0.5*n/sr, n)
-    #     delay = delay_arr[np.argmax(corrCC)]
-    #     plt.figure()
-    #     plt.plot(delay_arr, corrCC)
-    #     plt.title(f'unit {unit1.name} is {delay} behind unit {unit2.name}'+ '\n'+ 'Lag: '  + str(np.round(delay, 3)) + ' s')
-    #     plt.xlabel('Lag')
-    #     plt.ylabel('Correlation coeff')
-    #     plt.show()
-    
-    #return corrCC[idx], t[idx] 
-           
+        plt.figure(figsize=(4, 3))
+        plt.plot(lags, cc, 'k')
+        plt.axvline(0, ls='--', lw=0.8, c='k')
+        plt.xlabel("Lag (s)")
+        ylab = "Cross‑correlation (Hz)" if to_hz else "Normalised CC"
+        if subtract_baseline and not to_hz:
+            ylab += "\n(chance = 0)"
+        elif not subtract_baseline and not to_hz:
+            ylab += "\n(chance ≈ 1)"
+        plt.ylabel(ylab)
+        sns.despine()
+        plt.tight_layout()
+
+    return cc, lags
 
 
 
